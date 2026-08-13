@@ -16,10 +16,11 @@
 New module `vibe/script.py` — pure; no I/O except injected seams. Public functions:
 
 - `author_segment(brief, index, *, attempt=1) -> str` — deterministic templated prose for one segment.
-- `check_script(script, *, segment, sources) -> CheckResult` — the Script-Standard deterministic checks.
-- `gate_script(script, segment, sources, *, author=author_segment, max_attempts=3) -> ScriptRecord` — the gate loop.
-- `write_scripts(brief, layout) -> list[ScriptRecord]` — every segment, plus the index.
-- `approve_scripts(layout, *, approved=True) -> None` — flips gate statuses post human approval.
+- `check_script(script, *, segment, sources) -> CheckResult` — the Script-Standard deterministic checks; rejects on **any** violation, including the mechanical soft-checks.
+- `author_and_gate(brief, index, *, author: Author | None = None, max_attempts: int = 3) -> ScriptRecord` — the gate loop.
+- `write_scripts(brief, lay: layout.Layout, *, author: Author | None = None) -> list[ScriptRecord]` — every segment, plus the index.
+- `approve_scripts(lay, *, approve: bool) -> None` — flips gate statuses post human approval.
+- `read_index(lay: layout.Layout) -> dict[str, object]` — the current gate index (reads `index.json`).
 
 `CheckResult` = `{ok: bool, violations: list[str]}`. `ScriptRecord` = the index row (below).
 
@@ -81,7 +82,7 @@ Constructive guarantees (then re-verified by `check_script`):
 
 **Honest limitation (disclosed, accepted):** fully deterministic templated prose will likely pass the mechanical checks yet read artificial to a human — the accepted cost of the "no human edit" decision; the `needs-human` flag is the backstop.
 
-## 6. The gate (`gate_script`)
+## 6. The gate (`author_and_gate`)
 
 ```
 for attempt in 1..max_attempts(3):
@@ -108,7 +109,7 @@ Test seam: `author` is exposed to the CLI via `VIBE_SCRIPT_AUTHOR=failing` (same
 
 - `check_script`: a known-good script passes; one fixture per violating rule fails with the exact violation string.
 - `author_segment` golden test: same `(brief, index, attempt)` → same bytes; budget in range; all figures wrapped & traceable; no banned words/openings; markers present.
-- `gate_script` with a violating stub `author`: `needs-human` at attempt 3, never `ready`.
+- `author_and_gate` with a violating stub `author`: `needs-human` at attempt 3, never `ready`.
 - CLI: `make --feeds-from <fixtures>` writes `segment-<n>.txt` + `index.json`, auto-approves (non-tty); `VIBE_SCRIPT_AUTHOR=failing` → status stays blocked, exit 0.
 - Full suite: `python -m pytest`, `python -m mypy vibe`, `python -m ruff check vibe tests` all clean.
 
