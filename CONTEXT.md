@@ -13,7 +13,23 @@ The full-length output of the pipeline: an ordered list of segments, joined by h
 _Avoid_: episode, upload
 
 **Short**:
-The same content as a single segment, re-rendered for the vertical shorts format. A short is never a new idea, only a segment repackaged.
+The same content as a single segment, re-rendered for the vertical shorts format (9:16). A short is never a new idea, only a segment repackaged.
+
+**Assembly**:
+The deterministic stage that joins segment renders, hero/recap stills, narration, and caption sidecars into the full video and the per-segment shorts. No creative decisions live here.
+_Avoid_: compositing, muxing, post-production
+
+**Media contract**:
+The agreed artifact format between two pipeline stages (resolution, fps, codec, timing file) that lets each stage run independently and in parallel.
+_Avoid_: interface, schema
+
+**Review gate**:
+A human checkpoint in the pipeline: the script gate (after a segment's script draft) and the first-segment preview (after segment 1's full chain, before the remaining segments are produced).
+_Avoid_: approval, QA
+
+**Recap card**:
+The silent, designed summary frame shown at the end of the full video.
+_Avoid_: end card, outro
 
 **Hero frame**:
 The large anchor image shown between segments. The camera zooms in from the hero frame to a segment, returns to the hero frame, and offsets to the next segment.
