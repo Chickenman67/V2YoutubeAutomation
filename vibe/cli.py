@@ -14,9 +14,15 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__, check, discover, layout
+from . import __version__, check, discover, layout, script
 
 USAGE = "a video needs a thesis"
+
+
+def _select_script_author() -> script.Author:
+    if os.environ.get("VIBE_SCRIPT_AUTHOR") == "failing":
+        return script.failing_author
+    return script.author_segment
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -84,6 +90,21 @@ def _cmd_make(args: argparse.Namespace) -> int:
     text = json.dumps(topic_brief, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     created.topic_brief.write_text(text, encoding="utf-8")
     print(f"topic brief written to {created.topic_brief.as_posix()}")
+
+    author = _select_script_author()
+    records = script.write_scripts(topic_brief, created, author=author)
+    for rec in records:
+        print(f"{rec.file}: {rec.status} ({rec.word_count} words)")
+
+    interactive = sys.stdin is not None and sys.stdin.isatty()
+    if interactive:
+        answer = input("Approve scripts to proceed to narration? [y/N] ").strip().lower()
+        script.approve_scripts(created, approve=answer in ("y", "yes"))
+        if any(r.status == script.STATUS_NEEDS_HUMAN for r in records):
+            print("vibe make: some scripts need human review; narration is blocked "
+                  "for those segments (best-effort)", file=sys.stderr)
+    else:
+        script.approve_scripts(created, approve=True)  # non-interactive: auto-approve
     return 0
 
 

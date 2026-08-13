@@ -200,14 +200,28 @@ def run_cli():
     # `vibe make` network fetch is suppressed; use `--feeds-from` for real discovery.
     env["VIBE_OFFLINE"] = "1"
 
-    def _run(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, "-m", "vibe", *args],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=cwd or os.getcwd(),
-            env=env,
-        )
+    def _run(*args: str, cwd: str | None = None,
+             extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        run_env = dict(env)
+        if extra_env:
+            run_env.update(extra_env)
+        # CLOSE stdin for the subprocess. DEVNULL is unreliable for this on some
+        # Windows builds (fd 0 still reports as a console), so use a closed pipe:
+        # the child sees a real non-tty stdin and `vibe make` auto-approves instead
+        # of prompting (spec #12: non-interactive runs gate scripts as approved).
+        rfd, wfd = os.pipe()
+        os.close(wfd)
+        try:
+            return subprocess.run(
+                [sys.executable, "-m", "vibe", *args],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=cwd or os.getcwd(),
+                env=run_env,
+                stdin=rfd,
+            )
+        finally:
+            os.close(rfd)
 
     return _run

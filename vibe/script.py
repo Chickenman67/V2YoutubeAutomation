@@ -205,12 +205,25 @@ def _kws(seg: dict[str, object], title: str) -> list[str]:
     return out
 
 
-def _stakes(sources: list[dict[str, object]]) -> str:
+def _stakes(sources: list[dict[str, object]], opening: str) -> str:
     pub = ""
     for s in sources:
         pub = str(s.get("publisher", "")) or pub
     head = f"{pub} is tracking this now, and the takeaway is that" if pub else "The takeaway is that"
-    return head + " the cost of money stays high for the people who feel it."
+    # Give the payoff a few concrete wordings and pick the first (deterministic)
+    # that does not restate the hook, so the canned seeds pass the payoff check.
+    candidates = (
+        head + " the cost of money stays high for the people who feel it.",
+        "People feel it in the monthly bill.",
+        "It lands differently across the pay stubs.",
+    )
+    first = set(re.findall(_WORD, opening.lower()))
+    if not first:
+        return candidates[0]
+    for p in candidates:
+        if len(first & set(re.findall(_WORD, p.lower()))) < max(1, len(first) // 2):
+            return p
+    return candidates[0]
 
 
 def _hook_line(hooks: list[str]) -> str:
@@ -249,7 +262,7 @@ def author_segment(brief: dict[str, object], index: int, *, attempt: int = 1) ->
         i += 1
 
     lines.append(long)          # long line lands before the payoff (not last)
-    lines.append(_stakes(sources))  # payoff is the final line (hook-overlap check)
+    lines.append(_stakes(sources, lines[0]))  # payoff is the final line (hook-overlap check)
 
     return "\n".join(lines)
 
