@@ -165,3 +165,92 @@ def check_script(
         v.append("openers too uniform")
 
     return CheckResult(ok=not v, violations=tuple(v))
+
+
+# Plain, concrete elaboration frames (no numerals, no banned words, no spelled-out
+# contractions). Cycled by attempt so attempts differ deterministically while staying
+# byte-identical per (brief, index, attempt).
+_FRAMES = (
+    "the real number here is hard to ignore",
+    "every rate move ripples through someone's monthly budget",
+    "the people carrying these loans notice it fast",
+    "a small shift compounds by the time the next statement lands",
+    "that is the kind of detail that changes a plan",
+    "you don't need a spreadsheet to feel the difference",
+    "the market reacts long before the headlines catch up",
+    "this is where the story stops being academic",
+    "watch the trend more than the single print",
+    "the distinction matters more than it looks",
+    "the ripple shows up in places you wouldn't expect",
+    "that gap is where real decisions get made",
+    "the surprise is how quickly it shows up in the wallet",
+    "sooner than you think it moves the monthly total",
+    "the practical takeaway survives the jargon",
+)
+_OPENERS = ("", "But ", "And ", "So ", "The ", "That ", "This ", "Also ", "Now ", "Here ")
+
+
+def _kws(seg: dict[str, object], title: str) -> list[str]:
+    raw = _text_list(seg, "key_points") + re.findall(r"[a-z0-9]+", title.lower())
+    seen: set[str] = set()
+    out: list[str] = []
+    for w in raw:
+        w = w.lower()
+        if w not in seen and len(w) >= 3 and w not in ("the", "and", "that", "with"):
+            seen.add(w)
+            out.append(w)
+    return out
+
+
+def _stakes(sources: list[dict[str, object]]) -> str:
+    pub = ""
+    for s in sources:
+        pub = str(s.get("publisher", "")) or pub
+    head = f"{pub} is tracking this now, and the takeaway is that" if pub else "The takeaway is that"
+    return head + " the cost of money stays high for the people who feel it."
+
+
+def _hook_line(hooks: list[str]) -> str:
+    hook = (hooks[0] if hooks else "The numbers moved.").strip().rstrip(".")
+    return hook + "."
+
+
+def author_segment(brief: dict[str, object], index: int, *, attempt: int = 1) -> str:
+    """Deterministic templated script: hook, thesis, beats, padded, payoff last."""
+    seg = _segment(brief, index)
+    title = _seg_title(brief, index)
+    hook = str(seg.get("hook", "")).strip()
+    hooks = [hook] if hook else []
+    kws = _kws(seg, title)
+    kw = kws[0] if kws else "market"
+    sources = _sources(brief)
+
+    lines = [_hook_line(hooks)]
+    lines.append(f"Here's the thing though, the **{kw}** is the story everyone is chasing right now.")
+    for i, kp in enumerate(_text_list(seg, "key_points")[:4]):
+        word = kp.split()[0].lower()
+        opener = "But " if i == 0 else "And " if i == 3 else "So "
+        lines.append(f"{opener}the {word} matters more than the headline says.")
+
+    # guaranteed short + long lines so the length-mixing critique is satisfied
+    short, long = ("But the bill still comes.",
+                   ("And every single rate decision reshapes the monthly number for "
+                    "households that borrowed when money was cheap."))
+    lines.append(short)
+    # pad to >= 220 words, cycling openers/frames deterministically by (attempt, cursor)
+    i = 0
+    while word_count("\n".join(lines)) < 220:
+        frame = _FRAMES[(attempt - 1 + i) % len(_FRAMES)]
+        opener = _OPENERS[(attempt + i) % len(_OPENERS)]
+        lines.append(opener + frame)
+        i += 1
+
+    lines.append(long)          # long line lands before the payoff (not last)
+    lines.append(_stakes(sources))  # payoff is the final line (hook-overlap check)
+
+    return "\n".join(lines)
+
+
+def failing_author(brief: dict[str, object], index: int, *, attempt: int = 1) -> str:
+    return ("In conclusion, delve into the realm of this 9 problem, it can not be ignored. "
+            "Rates are high. The Fed has held steady for months. People feel the pinch.")
