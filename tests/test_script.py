@@ -110,3 +110,30 @@ def test_gate_never_ships_a_failing_draft():
     assert rec.status == script.STATUS_NEEDS_HUMAN
     assert rec.attempts == 3
     assert rec.violations
+
+def test_write_scripts_writes_files_and_index(tmp_path: Path):
+    b = _brief_with_segments()
+    lay = layout.create_layout(tmp_path)
+    recs = script.write_scripts(b, lay)
+    assert len(recs) == len(b["topic_brief"]["segments"])
+    for rec in recs:
+        assert (lay.scripts / rec.file).is_file()
+    idx = script.read_index(lay)
+    assert idx["video"] == b["topic_brief"]["title"]
+    assert all(r["status"] == script.STATUS_READY for r in idx["scripts"])
+
+def test_approve_promotes_ready_to_approved(tmp_path: Path):
+    b = _brief_with_segments()
+    lay = layout.create_layout(tmp_path)
+    _ = script.write_scripts(b, lay)
+    script.approve_scripts(lay, approve=True)
+    idx = script.read_index(lay)
+    assert all(r["status"] == script.STATUS_APPROVED for r in idx["scripts"])
+
+def test_approve_decline_blocks_ready(tmp_path: Path):
+    b = _brief_with_segments()
+    lay = layout.create_layout(tmp_path)
+    _ = script.write_scripts(b, lay)
+    script.approve_scripts(lay, approve=False)
+    idx = script.read_index(lay)
+    assert all(r["status"] == script.STATUS_NEEDS_HUMAN for r in idx["scripts"])

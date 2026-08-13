@@ -8,9 +8,12 @@ injectable seam so the not-ready path is testable offline. Deterministic: same
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Protocol, cast
+
+from . import layout
 
 STATUS_READY = "ready"
 STATUS_APPROVED = "approved"
@@ -276,3 +279,45 @@ def author_and_gate(
         last = ScriptRecord(index, f"segment-{index}.txt", word_count(text),
                             STATUS_NEEDS_HUMAN, attempt, res.violations)
     return last
+
+
+def _record_dict(rec: ScriptRecord) -> dict[str, object]:
+    return {"index": rec.index, "file": rec.file, "word_count": rec.word_count,
+            "status": rec.status, "attempts": rec.attempts, "violations": list(rec.violations)}
+
+
+def write_scripts(
+    brief: dict[str, object],
+    lay: layout.Layout,
+    *,
+    author: Author | None = None,
+) -> list[ScriptRecord]:
+    author = author or author_segment
+    tb = cast(dict[str, object], brief["topic_brief"])
+    n = len(cast(list[object], tb["segments"]))
+    records: list[ScriptRecord] = []
+    for index in range(1, n + 1):
+        rec = author_and_gate(brief, index, author=author)
+        text = author(brief, index, attempt=rec.attempts)
+        (lay.scripts / rec.file).write_text(text, encoding="utf-8")
+        records.append(rec)
+    idx = {"video": _text(tb, "title"),
+           "scripts": [_record_dict(r) for r in records]}
+    (lay.scripts / "index.json").write_text(
+        json.dumps(idx, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    return records
+
+
+def read_index(lay: layout.Layout) -> dict[str, object]:
+    return cast(dict[str, object], json.loads((lay.scripts / "index.json").read_text(encoding="utf-8")))
+
+
+def approve_scripts(lay: layout.Layout, *, approve: bool) -> None:
+    idx = read_index(lay)
+    recs = cast(list[object], idx["scripts"])
+    for row in recs:
+        d = cast(dict[str, object], row)
+        if d["status"] == STATUS_READY:
+            d["status"] = STATUS_APPROVED if approve else STATUS_NEEDS_HUMAN
+    (lay.scripts / "index.json").write_text(
+        json.dumps(idx, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
