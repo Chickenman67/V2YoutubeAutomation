@@ -28,5 +28,5 @@ The input contract to production: a title plus an ordered segment outline. Gener
 _Avoid_: brief, prompt, idea
 
 **Script Standard**:
-The human-written rules a narration script must satisfy before production: banned words, banned openings, no triadic abstract lists, varied sentence length and openers, contractions, no markdown artifacts, non-mechanical endings. Based on `AI-Detection-Techniques.md`.
+The human-written rules a narration script must satisfy before production: banned words, banned openings, no triadic abstract lists, varied sentence length and openers, contractions, no markdown artifacts, non-mechanical endings. Decided spec in `docs/specs/script-standard.md`.
 _Avoid_: style guide, tone rules
