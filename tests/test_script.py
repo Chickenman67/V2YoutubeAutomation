@@ -96,3 +96,17 @@ def test_author_budget_is_within_range():
 def test_author_varies_by_attempt():
     b = _brief_with_segments()
     assert script.author_segment(b, 1, attempt=1) != script.author_segment(b, 1, attempt=2)
+
+def test_gate_approves_a_real_draft_in_one_attempt():
+    b = _brief_with_segments()
+    rec = script.author_and_gate(b, 1)
+    assert rec.status == script.STATUS_READY
+    assert rec.attempts == 1
+    assert 200 <= rec.word_count <= 280
+
+def test_gate_never_ships_a_failing_draft():
+    b = _brief_with_segments()
+    rec = script.author_and_gate(b, 1, author=script.failing_author)
+    assert rec.status == script.STATUS_NEEDS_HUMAN
+    assert rec.attempts == 3
+    assert rec.violations

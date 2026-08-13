@@ -254,3 +254,25 @@ def author_segment(brief: dict[str, object], index: int, *, attempt: int = 1) ->
 def failing_author(brief: dict[str, object], index: int, *, attempt: int = 1) -> str:
     return ("In conclusion, delve into the realm of this 9 problem, it can not be ignored. "
             "Rates are high. The Fed has held steady for months. People feel the pinch.")
+
+
+def author_and_gate(
+    brief: dict[str, object],
+    index: int,
+    *,
+    author: Author | None = None,
+    max_attempts: int = 3,
+) -> ScriptRecord:
+    author = author or author_segment
+    seg = _segment(brief, index)
+    sources = _sources(brief)
+    last = ScriptRecord(index, f"segment-{index}.txt", 0, STATUS_NEEDS_HUMAN, max_attempts)
+    for attempt in range(1, max_attempts + 1):
+        text = author(brief, index, attempt=attempt)
+        res = check_script(text, segment=seg, sources=sources)
+        if res.ok:
+            return ScriptRecord(index, f"segment-{index}.txt", word_count(text),
+                                STATUS_READY, attempt)
+        last = ScriptRecord(index, f"segment-{index}.txt", word_count(text),
+                            STATUS_NEEDS_HUMAN, attempt, res.violations)
+    return last
