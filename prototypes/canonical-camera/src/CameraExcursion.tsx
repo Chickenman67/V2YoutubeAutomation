@@ -8,7 +8,13 @@ import {
   staticFile,
 } from "remotion";
 
-type Target = { t: number; scale: number; cx: number; cy: number };
+type Phase = { name: string; start: number; end: number };
+
+type Segment = {
+  topic: number;
+  title: string;
+  phases: Phase[];
+};
 
 // Hero tile centers (from gen_assets.py layout). Index = topic number.
 const TILES = [
@@ -21,59 +27,89 @@ const TILES = [
 const FULL_SCALE = 2.45; // scale where a tile fills the 1920x1080 viewport.
 const CENTER = { cx: 960, cy: 540 };
 
-// Camera timeline: [startSec, endSec] for hero-zoom legs and the segment holds.
-type SegmentPlan = {
-  topic: number;
-  zoomIn: [number, number];
-  hold: [number, number];
-  zoomOut: [number, number];
+// Phase durations (seconds) per segment. This is the template's knobs.
+const DUR = {
+  zoomIn: 0.8, // immediate zoom onto the topic tile
+  nameHold: 1.6, // time for TTS to say the topic title
+  cut: 0.35, // crossfade the tile-zoom -> full topic image ("cut to full screen")
+  bodyHold: 2.0, // the segment content itself
+  zoomOut: 0.7, // back to the hero menu
 };
 
-// TODO tune: this encodes one segment excursion = zoom-in, hold the segment, zoom-out.
-// The hero offset (slide to the next topic) is just the NEXT segment's zoom-in
-// starting from the full-hero frame, so it is implicit in the timeline.
-const PLAN: SegmentPlan[] = [
-  { topic: 0, zoomIn: [1.2, 2.4], hold: [3.0, 5.5], zoomOut: [5.5, 6.1] },
-  { topic: 1, zoomIn: [6.6, 7.8], hold: [8.4, 9.4], zoomOut: [9.4, 10.0] },
+const TOPIC_TITLES = [
+  "Treasury Yields",
+  "Fed Rate Hikes",
+  "CPI Inflation",
+  "S&P 500 Rally",
 ];
 
-function cameraAt(t: number): { scale: number; cx: number; cy: number; activeTopic: number | null } {
-  // Before the first zoom-in: full hero.
-  let state: Target = { t: 0, scale: 1, cx: CENTER.cx, cy: CENTER.cy };
-  let activeTopic: number | null = null;
+// Build the segment plan sequentially from the duration knobs. Adding a topic
+// to TOPIC_TITLES (and a matching topicN.png) is all that's needed.
+function buildPlan(topics: number[]): Segment[] {
+  const segments: Segment[] = [];
+  for (let i = 0; i < topics.length; i++) {
+    const base = i === 0 ? 0 : segments[i - 1].phases.at(-1)!.end;
+    segments.push({
+      topic: topics[i],
+      title: TOPIC_TITLES[topics[i]],
+      phases: [
+        { name: "zoomIn", start: base, end: base + DUR.zoomIn },
+        { name: "nameHold", start: base + DUR.zoomIn, end: base + DUR.zoomIn + DUR.nameHold },
+        { name: "cut", start: base + DUR.zoomIn + DUR.nameHold, end: base + DUR.zoomIn + DUR.nameHold + DUR.cut },
+        { name: "bodyHold", start: base + DUR.zoomIn + DUR.nameHold + DUR.cut, end: base + DUR.zoomIn + DUR.nameHold + DUR.cut + DUR.bodyHold },
+        { name: "zoomOut", start: base + DUR.zoomIn + DUR.nameHold + DUR.cut + DUR.bodyHold, end: base + DUR.zoomIn + DUR.nameHold + DUR.cut + DUR.bodyHold + DUR.zoomOut },
+      ],
+    });
+  }
+  return segments;
+}
 
-  for (const plan of PLAN) {
-    const tile = TILES[plan.topic];
-    // Zoom in
-    if (t >= plan.zoomIn[0] && t <= plan.zoomIn[1]) {
-      const p = interpolate(t, plan.zoomIn, [0, 1], {
-        easing: Easing.inOut(Easing.cubic),
-      });
-      return {
-        scale: 1 + (FULL_SCALE - 1) * p,
-        cx: CENTER.cx + (tile.cx - CENTER.cx) * p,
-        cy: CENTER.cy + (tile.cy - CENTER.cy) * p,
-        activeTopic: null,
-      };
+const PLAN = buildPlan([0, 1]);
+const TOTAL = PLAN.at(-1)!.phases.at(-1)!.end;
+
+function phaseOf(seg: Segment, t: number): Phase | undefined {
+  return seg.phases.find((p) => t >= p.start && t < p.end);
+}
+
+type Cam = { scale: number; cx: number; cy: number; cutProgress: number; nameOpacity: number; showFull: boolean };
+
+function cameraAt(t: number): Cam {
+  // base: start from hero (or the hold of the previous segment's zoom-into next tile)
+  let scale = 1;
+  let cx = CENTER.cx;
+  let cy = CENTER.cy;
+
+  for (let i = 0; i < PLAN.length; i++) {
+    const seg = PLAN[i];
+    const p = phaseOf(seg, t);
+    if (!p) continue;
+    const tile = TILES[seg.topic];
+    const frame = (ph: string) => seg.phases.find((x) => x.name === ph)!;
+
+    if (p.name === "zoomIn") {
+      const k = interpolate(t, [p.start, p.end], [0, 1], { easing: Easing.inOut(Easing.cubic) });
+      scale = 1 + (FULL_SCALE - 1) * k;
+      cx = CENTER.cx + (tile.cx - CENTER.cx) * k;
+      cy = CENTER.cy + (tile.cy - CENTER.cy) * k;
+      return { scale, cx, cy, cutProgress: 0, nameOpacity: 1, showFull: false };
     }
-    // Hold: topic fills screen at full scale.
-    if (t >= plan.zoomIn[1] && t < plan.hold[1]) {
-      return { scale: FULL_SCALE, cx: tile.cx, cy: tile.cy, activeTopic: plan.topic };
+    if (p.name === "nameHold") {
+      return { scale: FULL_SCALE, cx: tile.cx, cy: tile.cy, cutProgress: 0, nameOpacity: 1, showFull: false };
     }
-    // Zoom out back to hero.
-    if (t >= plan.zoomOut[0] && t <= plan.zoomOut[1]) {
-      const p = interpolate(t, plan.zoomOut, [0, 1], {
-        easing: Easing.inOut(Easing.cubic),
-      });
-      return {
-        scale: FULL_SCALE + (1 - FULL_SCALE) * p,
-        cx: tile.cx + (CENTER.cx - tile.cx) * p,
-        cy: tile.cy + (CENTER.cy - tile.cy) * p,
-        activeTopic: null,
-      };
+    if (p.name === "cut") {
+      const k = interpolate(t, [p.start, p.end], [0, 1], { easing: Easing.inOut(Easing.cubic) });
+      return { scale: FULL_SCALE, cx: tile.cx, cy: tile.cy, cutProgress: k, nameOpacity: 1 - k, showFull: true };
+    }
+    if (p.name === "bodyHold") {
+      return { scale: 1, cx: CENTER.cx, cy: CENTER.cy, cutProgress: 1, nameOpacity: 0, showFull: true };
+    }
+    if (p.name === "zoomOut") {
+      const k = interpolate(t, [p.start, p.end], [1, 0], { easing: Easing.inOut(Easing.cubic) });
+      return { scale: FULL_SCALE * k + 1 * (1 - k), cx: tile.cx * k + CENTER.cx * (1 - k), cy: tile.cy * k + CENTER.cy * (1 - k), cutProgress: 1, nameOpacity: 0, showFull: false };
     }
   }
-  return { ...state, activeTopic, scale: 1, cx: CENTER.cx, cy: CENTER.cy };
+  // After the last segment: rest on the hero menu.
+  return { scale: 1, cx: CENTER.cx, cy: CENTER.cy, cutProgress: 0, nameOpacity: 0, showFull: false };
 }
 
 export const CameraExcursion: React.FC = () => {
@@ -82,10 +118,7 @@ export const CameraExcursion: React.FC = () => {
   const t = frame / fps;
   const cam = cameraAt(t);
 
-  const currentPlan = PLAN.find(
-    (p) => t >= p.zoomIn[1] && t < p.hold[1]
-  );
-  const topicOpacity = currentPlan ? 1 : 0;
+  const active = PLAN.find((s) => t >= s.phases[0].start && t < s.phases.at(-1)!.end);
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#0b0b0f", position: "relative", overflow: "hidden" }}>
@@ -104,36 +137,21 @@ export const CameraExcursion: React.FC = () => {
           }px) scale(${cam.scale})`,
         }}
       />
-      {/* Active topic fullscreen overlay - crossfaded in on the hold. */}
-      {currentPlan && (
+      {/* Full topic image - crossfaded in on the cut, showing after the name is said. */}
+      {active && (
         <img
-          src={staticFile(`assets/topic${currentPlan.topic}.png`)}
+          src={staticFile(`assets/topic${active.topic}.png`)}
           style={{
             position: "absolute",
             top: 0,
             left: 0,
             width: 1920,
             height: 1080,
-            opacity: topicOpacity,
+            opacity: cam.cutProgress,
           }}
         />
       )}
-      {/* Debug readout: shows the live camera state (surface the state after every move). */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: 16,
-          left: 16,
-          color: "#fff",
-          fontFamily: "monospace",
-          fontSize: 22,
-          backgroundColor: "rgba(0,0,0,0.6)",
-          padding: "8px 14px",
-          borderRadius: 6,
-        }}
-      >
-        t={t.toFixed(2)}s scale={cam.scale.toFixed(2)} center=({cam.cx},{cam.cy}) topic={cam.activeTopic}
-      </div>
+{/* Topic name - baked into the hero tile itself; no separate overlay. */}
     </AbsoluteFill>
   );
 };
