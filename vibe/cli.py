@@ -98,7 +98,10 @@ def _cmd_make(args: argparse.Namespace) -> int:
 
     interactive = sys.stdin is not None and sys.stdin.isatty()
     if interactive:
-        answer = input("Approve scripts to proceed to narration? [y/N] ").strip().lower()
+        try:
+            answer = input("Approve scripts to proceed to narration? [y/N] ").strip().lower()
+        except EOFError:
+            answer = "n"  # EOF on a tty == declining: block, but still exit 0 (best-effort)
         script.approve_scripts(created, approve=answer in ("y", "yes"))
         if any(r.status == script.STATUS_NEEDS_HUMAN for r in records):
             print("vibe make: some scripts need human review; narration is blocked "

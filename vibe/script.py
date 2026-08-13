@@ -193,15 +193,29 @@ _FRAMES = (
 _OPENERS = ("", "But ", "And ", "So ", "The ", "That ", "This ", "Also ", "Now ", "Here ")
 
 
+# Common function words we never want as an emphasis keyword (Script-Standard §1:
+# `**word**` is a short keyword/phrase). Weighted toward opener words so the thesis
+# picks a concrete noun/verb, not a filler.
+_KEYWORD_STOP = frozenset((
+    "the", "and", "that", "with", "for", "this", "from", "are", "was", "were",
+    "you", "your", "what", "how", "why", "who", "when", "where", "which", "will",
+    "would", "have", "has", "had", "does", "did", "do", "can", "could", "should",
+    "into", "onto", "about", "than", "then", "them", "their", "there", "they",
+    "these", "those", "because", "before", "after", "while", "over", "under",
+    "its", "not", "also", "but", "so", "just", "only", "more", "most", "mean",
+))
+
+
 def _kws(seg: dict[str, object], title: str) -> list[str]:
     raw = _text_list(seg, "key_points") + re.findall(r"[a-z0-9]+", title.lower())
     seen: set[str] = set()
     out: list[str] = []
-    for w in raw:
-        w = w.lower()
-        if w not in seen and len(w) >= 3 and w not in ("the", "and", "that", "with"):
-            seen.add(w)
-            out.append(w)
+    for item in raw:
+        for w in re.findall(r"[a-z0-9]+", item.lower()):
+            if w not in seen and len(w) >= 3 and w not in _KEYWORD_STOP:
+                seen.add(w)
+                out.append(w)
+                break
     return out
 
 

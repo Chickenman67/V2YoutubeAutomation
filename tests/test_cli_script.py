@@ -32,3 +32,25 @@ def test_make_failing_author_flags_but_exits_zero(run_cli, tmp_path: Path):
     assert proc.returncode == 0
     idx = json.loads((tmp_path / "build" / "scripts" / "index.json").read_text(encoding="utf-8"))
     assert all(r["status"] == script.STATUS_NEEDS_HUMAN for r in idx["scripts"])
+
+
+def test_make_tty_eof_exits_zero_and_blocks(monkeypatch, tmp_path: Path):
+    import argparse
+    import builtins
+
+    from vibe import cli
+
+    class _Tty:
+        def isatty(self):
+            return True
+
+    def _eof(prompt: str = ""):
+        raise EOFError
+
+    args = argparse.Namespace(thesis="mortgage rates", feeds_from=FIXTURES)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.stdin", _Tty())
+    monkeypatch.setattr(builtins, "input", _eof)
+    assert cli._cmd_make(args) == 0
+    idx = json.loads((tmp_path / "build" / "scripts" / "index.json").read_text(encoding="utf-8"))
+    assert all(r["status"] == script.STATUS_NEEDS_HUMAN for r in idx["scripts"])

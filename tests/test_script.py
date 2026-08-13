@@ -93,6 +93,14 @@ def test_author_budget_is_within_range():
     b = _brief_with_segments()
     assert 200 <= script.word_count(script.author_segment(b, 2)) <= 280
 
+def test_thesis_emphasis_is_a_single_word():
+    b = _brief_with_segments()
+    thesis = next(l for l in script.author_segment(b, 1).splitlines() if "**" in l)
+    inner = thesis.split("**")[1]
+    assert len(inner.split()) == 1
+    assert len(inner) >= 3
+
+
 def test_author_varies_by_attempt():
     b = _brief_with_segments()
     assert script.author_segment(b, 1, attempt=1) != script.author_segment(b, 1, attempt=2)
