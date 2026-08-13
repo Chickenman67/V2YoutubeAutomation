@@ -8,10 +8,12 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__, check, layout
+from . import __version__, check, discover, layout
 
 USAGE = "a video needs a thesis"
 
@@ -23,6 +25,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     make = sub.add_parser("make", help="create the build layout for a thesis")
     make.add_argument("thesis", nargs="?", help="niche or thesis for the video")
+    make.add_argument(
+        "--feeds-from",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="directory of local RSS/XML files for offline topic discovery",
+    )
     make.set_defaults(_handler=_cmd_make)
 
     ck = sub.add_parser("check", help="validate an artifact against the media contract")
@@ -50,9 +59,26 @@ def _cmd_make(args: argparse.Namespace) -> int:
         return 2
     root = Path("build")
     created = layout.create_layout(root)
-    manifest = created.manifest
     print(f"build layout ready at {root}/")
-    print(f"media contract + flags recorded in {manifest.as_posix()}")
+    print(f"media contract + flags recorded in {created.manifest.as_posix()}")
+
+    niche, thesis = discover.classify_input(args.thesis)
+    now = datetime.now(UTC)
+    if args.feeds_from is not None:
+        items = discover.read_feeds_dir(args.feeds_from)
+    else:
+        items = discover.fetch_feeds(discover.urlopen_fetcher)
+    brief = discover.build_brief_from_items(items, niche=niche, thesis=thesis, now=now)
+    if brief is None:
+        print(
+            "vibe make: no on-topic topic found; brief.json not written (research is "
+            "best-effort at the CLI seam)",
+            file=sys.stderr,
+        )
+        return 0
+    text = json.dumps(brief, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    created.brief.write_text(text, encoding="utf-8")
+    print(f"topic brief written to {created.brief.as_posix()}")
     return 0
 
 

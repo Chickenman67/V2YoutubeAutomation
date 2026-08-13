@@ -30,6 +30,10 @@ class Layout:
         return self.root / MANIFEST_NAME
 
     @property
+    def brief(self) -> Path:
+        return self.root / "brief.json"
+
+    @property
     def segments(self) -> Path:
         return self.root / "segments"
 
