@@ -196,6 +196,9 @@ def run_cli():
     project_root = str(Path(__file__).resolve().parents[1])
     env = dict(os.environ)
     env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
+    # Never reach live feeds from tests (spec #9: no live services). The default
+    # `vibe make` network fetch is suppressed; use `--feeds-from` for real discovery.
+    env["VIBE_OFFLINE"] = "1"
 
     def _run(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(

@@ -106,6 +106,21 @@ def test_select_topic_empty_returns_none():
     assert discover.select_topic([]) is None
 
 
+def test_select_topic_breaks_ties_by_feed_registry_order():
+    from datetime import UTC, datetime
+
+    tie = discover.Score(currency=1, relatability=1, explainability=1, total=3)
+    published = datetime(2026, 8, 12, 0, 0, tzinfo=UTC)
+    later_feed = discover.FeedItem(
+        "cnbc rate story", "https://cnbc/x", "CNBC", published, (), "cnbc-business-news"
+    )
+    earlier_feed = discover.FeedItem(
+        "yahoo rate story", "https://yahoo/x", "Yahoo Finance", published, (), "yahoo-finance-news"
+    )
+    picked, _ = discover.select_topic([(later_feed, tie), (earlier_feed, tie)])
+    assert picked.feed == "yahoo-finance-news"  # earlier registry entry = stronger source reputation
+
+
 def _fed_topic():
     return discover.parse_rss(_fixture("yahoo-finance-news.rss"), "yahoo-finance-news")[0]
 
@@ -132,12 +147,12 @@ def test_build_segments_seed_key_points_from_the_topic_title():
 
 
 def test_build_brief_follows_topic_brief_schema():
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     topic = _fed_topic()
     now = datetime(2026, 8, 13, 1, 0, tzinfo=UTC)
     segments = discover.build_segments(topic)
-    brief = discover.build_brief(topic, segments, niche="mortgage rates", thesis=None, now=now)
+    brief = discover.build_topic_brief(topic, segments, niche="mortgage rates", thesis=None, now=now)
     assert set(brief) == {"topic_brief"}
     tb = brief["topic_brief"]
     assert tb["id"].startswith("tb-")

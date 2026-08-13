@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -66,19 +67,23 @@ def _cmd_make(args: argparse.Namespace) -> int:
     now = datetime.now(UTC)
     if args.feeds_from is not None:
         items = discover.read_feeds_dir(args.feeds_from)
+    elif os.environ.get("VIBE_OFFLINE"):
+        items = []
     else:
         items = discover.fetch_feeds(discover.urlopen_fetcher)
-    brief = discover.build_brief_from_items(items, niche=niche, thesis=thesis, now=now)
-    if brief is None:
+    topic_brief = discover.build_topic_brief_from_items(
+        items, niche=niche, thesis=thesis, now=now
+    )
+    if topic_brief is None:
         print(
             "vibe make: no on-topic topic found; brief.json not written (research is "
             "best-effort at the CLI seam)",
             file=sys.stderr,
         )
         return 0
-    text = json.dumps(brief, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    created.brief.write_text(text, encoding="utf-8")
-    print(f"topic brief written to {created.brief.as_posix()}")
+    text = json.dumps(topic_brief, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    created.topic_brief.write_text(text, encoding="utf-8")
+    print(f"topic brief written to {created.topic_brief.as_posix()}")
     return 0
 
 

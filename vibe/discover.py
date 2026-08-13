@@ -1,8 +1,8 @@
 """Topic discovery: tier-1 RSS feeds -> a gated, scored Topic Brief (ticket #10).
 
 Pipeline stages are pure functions (no network) so the CLI seam is testable offline
-(spec #9): parse -> gate -> score -> select -> build brief. The only network touch is
-the injectable default fetcher, replaced by local files in tests.
+(spec #9): parse -> gate -> score -> select -> build Topic Brief. The only network touch
+is the injectable default fetcher, replaced by local files in tests.
 """
 
 from __future__ import annotations
@@ -45,6 +45,11 @@ class FeedItem:
     categories: tuple[str, ...]
     feed: str
 
+    @property
+    def searchable_text(self) -> str:
+        """Lowercased title/url/categories: the single haystack for gate and rubric."""
+        return f"{self.title} {self.url} {' '.join(self.categories)}".lower()
+
 
 @dataclass(frozen=True)
 class Score:
@@ -56,7 +61,11 @@ class Score:
 
 # JSON payload shapes; values are heterogeneous (int index, str title, list key_points).
 Segment = dict[str, object]
-Brief = dict[str, object]
+TopicBrief = dict[str, object]
+
+
+def _prefix_match(text: str, term: str) -> bool:
+    return re.search(rf"(?<![a-z0-9]){re.escape(term)}[a-z0-9]*", text) is not None
 
 
 def _local(tag: str) -> str:
@@ -146,11 +155,8 @@ def matches_terms(item: FeedItem, terms: frozenset[str]) -> bool:
     """True if any term is a prefix of a word in the item's title/url/categories."""
     if not terms:
         return True
-    hay = f"{item.title.lower()} {item.url.lower()} {' '.join(item.categories).lower()}"
-    for term in terms:
-        if re.search(rf"(?<![a-z0-9]){re.escape(term)}[a-z0-9]*", hay):
-            return True
-    return False
+    hay = item.searchable_text
+    return any(_prefix_match(hay, term) for term in terms)
 
 
 def gate_items(
@@ -158,8 +164,8 @@ def gate_items(
 ) -> list[FeedItem]:
     """Keep items whose title/url/categories match the user's niche or thesis.
 
-    The hard gate (research §1 pick rule): off-topic candidates never reach the brief,
-    even if they score well. With no usable terms the gate passes everything.
+    The hard gate (research §1 pick rule): off-topic candidates never reach the Topic
+    Brief, even if they score well. With no usable terms the gate passes everything.
     """
     terms = _terms(niche) if niche else _terms(thesis) if thesis else frozenset()
     if not terms:
@@ -184,12 +190,12 @@ def _bucket(count: int) -> int:
 
 
 def _distinct_matches(hay: str, terms: frozenset[str]) -> int:
-    return sum(1 for t in terms if re.search(rf"(?<![a-z0-9]){re.escape(t)}[a-z0-9]*", hay))
+    return sum(1 for t in terms if _prefix_match(hay, t))
 
 
 def score_item(item: FeedItem, *, now: datetime) -> Score:
     """Rubric score (currency, relatability, explainability), 0-3 each (research §1)."""
-    hay = f"{item.title.lower()} {item.url.lower()} {' '.join(item.categories).lower()}"
+    hay = item.searchable_text
     if item.published is None:
         currency = 0
     else:
@@ -240,12 +246,12 @@ def _title_keywords(title: str) -> list[str]:
     )
 
 
-def build_segments(topic: FeedItem, *, roles: tuple[dict[str, str], ...] = NARRATIVE_ROLES) -> list[Segment]:
+def build_segments(topic: FeedItem) -> list[Segment]:
     """Deterministic 4-6 segment outline; every beat traces to the topic's title."""
     phrases = _title_phrases(topic.title)
     keywords = _title_keywords(topic.title)
     segments: list[Segment] = []
-    for position, role in enumerate(roles, start=1):
+    for position, role in enumerate(NARRATIVE_ROLES, start=1):
         seed = phrases[(position - 1) % len(phrases)]
         seen = {seed.lower()}
         key_points = [seed]
@@ -266,21 +272,20 @@ def _to_zulu(dt: datetime) -> str:
     return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-def build_brief(
+def build_topic_brief(
     topic: FeedItem,
     segments: list[Segment],
     *,
     niche: str | None,
     thesis: str | None,
     now: datetime,
-    status: str = "ready",
-) -> Brief:
+) -> TopicBrief:
     """Assemble the Topic Brief (research §4). `now` must be timezone-aware."""
     return {
         "topic_brief": {
             "id": f"tb-{now:%Y-%m-%d-%H%M}",
             "generated_at": _to_zulu(now),
-            "status": status,
+            "status": "ready",
             "input": {"niche": niche or None, "thesis": thesis or None},
             "title": topic.title,
             "segments": segments,
@@ -322,15 +327,15 @@ def urlopen_fetcher(url: str) -> str:
 
 
 def fetch_feeds(fetcher: Fetcher, *, feeds: dict[str, dict[str, str]] | None = None) -> list[FeedItem]:
-    """Pull every tier-1 feed; a single feed failing never aborts the poll."""
+    """Pull every tier-1 feed; a failed feed (network or malformed) is skipped."""
     feeds = feeds or FEEDS
     items: list[FeedItem] = []
     for name, meta in feeds.items():
         try:
             xml_text = fetcher(meta["url"])
+            items.extend(parse_rss(xml_text, name, meta.get("publisher")))
         except Exception:  # noqa: BLE001, S112 - skip a failed feed, never abort the poll
             continue
-        items.extend(parse_rss(xml_text, name, meta.get("publisher")))
     return items
 
 
@@ -359,19 +364,19 @@ def choose_topic(
     return select_topic(scored)
 
 
-def build_brief_from_items(
+def build_topic_brief_from_items(
     items: list[FeedItem],
     *,
     niche: str | None = None,
     thesis: str | None = None,
     now: datetime,
-) -> Brief | None:
+) -> TopicBrief | None:
     """Best on-topic item -> a Topic Brief, or None when nothing passes the gate."""
     picked = choose_topic(items, niche=niche, thesis=thesis, now=now)
     if picked is None:
         return None
     topic, _ = picked
-    return build_brief(topic, build_segments(topic), niche=niche, thesis=thesis, now=now)
+    return build_topic_brief(topic, build_segments(topic), niche=niche, thesis=thesis, now=now)
 
 
 def parse_rss(xml: str, feed_name: str, publisher: str | None = None) -> list[FeedItem]:
