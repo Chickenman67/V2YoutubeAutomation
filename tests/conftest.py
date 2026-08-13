@@ -11,6 +11,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -67,60 +68,60 @@ def tmp_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return tmp_path_factory.mktemp("vibe-check")
 
 
+def _video_fixture(ffmpeg_available: bool, tmp_dir: Path, name: str, **kwargs: Any) -> Path:
+    if not ffmpeg_available:
+        pytest.skip("ffmpeg/ffprobe not on PATH")
+    dest = tmp_dir / name
+    _render(dest, **kwargs)
+    return dest
+
+
 @pytest.fixture(scope="session")
 def good_full(tmp_dir: Path, ffmpeg_available: bool) -> Path:
-    pytest.skip("ffmpeg/ffprobe not on PATH") if not ffmpeg_available else None
-    dest = tmp_dir / "good-full.mp4"
-    _render(dest, width=1920, height=1080, duration=2.0)
-    return dest
+    return _video_fixture(ffmpeg_available, tmp_dir, "good-full.mp4", width=1920, height=1080, duration=2.0)
 
 
 @pytest.fixture(scope="session")
 def good_short(tmp_dir: Path, ffmpeg_available: bool) -> Path:
-    pytest.skip("ffmpeg/ffprobe not on PATH") if not ffmpeg_available else None
-    dest = tmp_dir / "good-short.mp4"
-    _render(dest, width=1080, height=1920, duration=2.0)
-    return dest
+    return _video_fixture(ffmpeg_available, tmp_dir, "good-short.mp4", width=1080, height=1920, duration=2.0)
 
 
 @pytest.fixture(scope="session")
 def bad_resolution(tmp_dir: Path, ffmpeg_available: bool) -> Path:
-    pytest.skip("ffmpeg/ffprobe not on PATH") if not ffmpeg_available else None
-    dest = tmp_dir / "bad-resolution.mp4"
-    _render(dest, width=1280, height=720, duration=2.0)
-    return dest
+    return _video_fixture(ffmpeg_available, tmp_dir, "bad-resolution.mp4", width=1280, height=720, duration=2.0)
 
 
 @pytest.fixture(scope="session")
 def bad_codec(tmp_dir: Path, ffmpeg_available: bool) -> Path:
-    pytest.skip("ffmpeg/ffprobe not on PATH") if not ffmpeg_available else None
-    dest = tmp_dir / "bad-codec.mp4"
-    _render(dest, width=1920, height=1080, duration=2.0, vcodec="mpeg4", vopts=["-q:v", "5"])
-    return dest
+    return _video_fixture(
+        ffmpeg_available, tmp_dir, "bad-codec.mp4", width=1920, height=1080, duration=2.0, vcodec="mpeg4", vopts=["-q:v", "5"]
+    )
 
 
 @pytest.fixture(scope="session")
 def bad_pixfmt(tmp_dir: Path, ffmpeg_available: bool) -> Path:
-    pytest.skip("ffmpeg/ffprobe not on PATH") if not ffmpeg_available else None
-    dest = tmp_dir / "bad-pixfmt.mp4"
-    _render(dest, width=1920, height=1080, duration=2.0, vcodec="libx264", vopts=["-pix_fmt", "yuv422p", "-crf", "18", "-preset", "veryfast"])
-    return dest
+    return _video_fixture(
+        ffmpeg_available,
+        tmp_dir,
+        "bad-pixfmt.mp4",
+        width=1920,
+        height=1080,
+        duration=2.0,
+        vcodec="libx264",
+        vopts=["-pix_fmt", "yuv422p", "-crf", "18", "-preset", "veryfast"],
+    )
 
 
 @pytest.fixture(scope="session")
 def bad_audio(tmp_dir: Path, ffmpeg_available: bool) -> Path:
-    pytest.skip("ffmpeg/ffprobe not on PATH") if not ffmpeg_available else None
-    dest = tmp_dir / "bad-audio.mp4"
-    _render(dest, width=1920, height=1080, duration=2.0, aopts=["-ar", "22050", "-b:a", "128k", "-ac", "2"])
-    return dest
+    return _video_fixture(
+        ffmpeg_available, tmp_dir, "bad-audio.mp4", width=1920, height=1080, duration=2.0, aopts=["-ar", "22050", "-b:a", "128k", "-ac", "2"]
+    )
 
 
 @pytest.fixture(scope="session")
 def bad_duration(tmp_dir: Path, ffmpeg_available: bool) -> Path:
-    pytest.skip("ffmpeg/ffprobe not on PATH") if not ffmpeg_available else None
-    dest = tmp_dir / "bad-duration.mp4"
-    _render(dest, width=1920, height=1080, duration=1.0)
-    return dest
+    return _video_fixture(ffmpeg_available, tmp_dir, "bad-duration.mp4", width=1920, height=1080, duration=1.0)
 
 
 def write_timing(dest: Path, *, end: float) -> Path:
@@ -187,17 +188,23 @@ def bad_timing(tmp_dir: Path) -> Path:
 
 @pytest.fixture(scope="session")
 def run_cli():
+    import os
     import sys
 
-    def _run(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
-        import os
+    # Make `python -m vibe` importable regardless of cwd or install state, so the
+    # CLI-seam tests run on a bare checkout (spec #9: tests at the CLI seam).
+    project_root = str(Path(__file__).resolve().parents[1])
+    env = dict(os.environ)
+    env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
 
+    def _run(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, "-m", "vibe", *args],
             capture_output=True,
             text=True,
             check=False,
             cwd=cwd or os.getcwd(),
+            env=env,
         )
 
     return _run

@@ -29,7 +29,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ck.add_argument("artifact", type=Path, help="path to .mp4, .srt, or .timing.jsonl")
     ck.add_argument(
         "--kind",
-        choices=("full", "clip", "short"),
+        choices=tuple(check.KIND_RESOLUTION),
         default=None,
         help="expected format for a video artifact (default: clip, 1920x1080@30)",
     )

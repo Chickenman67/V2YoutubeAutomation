@@ -40,6 +40,13 @@ from .config import (
 
 FPS_TOLERANCE = 0.01
 
+# The resolution half of the media contract, keyed by the CLI `--kind` value.
+KIND_RESOLUTION: dict[str, tuple[int, int]] = {
+    "full": (FULL_WIDTH, FULL_HEIGHT),
+    "clip": (FULL_WIDTH, FULL_HEIGHT),
+    "short": (SHORT_WIDTH, SHORT_HEIGHT),
+}
+
 
 @dataclass(frozen=True)
 class CheckResult:
@@ -64,7 +71,6 @@ class MediaProbe:
     sample_rate: int | None = None
     channels: int | None = None
     container_duration: float | None = None
-    audio_duration: float | None = None
 
 
 def _parse_fraction(value: str) -> float | None:
@@ -126,13 +132,6 @@ def probe_media(path: Path) -> MediaProbe:
     if isinstance(rate, str):
         fps = _parse_fraction(rate)
 
-    audio_duration: float | None = None
-    raw_ad = audio.get("duration")
-    try:
-        audio_duration = float(raw_ad) if raw_ad is not None else None
-    except (TypeError, ValueError):
-        audio_duration = None
-
     return MediaProbe(
         video_codec=str(video.get("codec_name")) if video.get("codec_name") else None,
         video_profile=str(video.get("profile")) if video.get("profile") else None,
@@ -145,7 +144,6 @@ def probe_media(path: Path) -> MediaProbe:
         sample_rate=_int(audio, "sample_rate"),
         channels=_int(audio, "channels"),
         container_duration=container_duration,
-        audio_duration=audio_duration,
     )
 
 
@@ -153,7 +151,7 @@ class MediaNotFound(RuntimeError):
     """Raised when a media artifact cannot be probed."""
 
 
-def _require(probe: MediaProbe, condition: bool, message: str, failures: list[str]) -> None:
+def _require(condition: bool, message: str, failures: list[str]) -> None:
     if condition:
         return
     failures.append(message)
@@ -166,36 +164,35 @@ def check_video(path: Path, *, kind: str, timing: Path | None = None) -> CheckRe
     file is supplied, the container duration must match the narration (open + body).
     """
     failures: list[str] = []
+    try:
+        want_w, want_h = KIND_RESOLUTION[kind]
+    except KeyError:
+        raise ValueError(f"unknown kind {kind!r} (use full, clip, or short)") from None
     probe = probe_media(path)
 
-    if kind == "short":
-        want_w, want_h = SHORT_WIDTH, SHORT_HEIGHT
-    else:
-        want_w, want_h = FULL_WIDTH, FULL_HEIGHT
-
-    _require(probe, probe.video_codec is not None, "no video stream", failures)
+    _require(probe.video_codec is not None, "no video stream", failures)
     if probe.video_codec is not None:
-        _require(probe, probe.video_codec.lower() == VIDEO_CODEC, f"video codec {probe.video_codec!r} != {VIDEO_CODEC}", failures)
-        _require(probe, (probe.video_profile or "").lower() == VIDEO_PROFILE, f"video profile {probe.video_profile!r} != {VIDEO_PROFILE}", failures)
-        _require(probe, (probe.pix_fmt or "").lower() == PIX_FMT, f"pix_fmt {probe.pix_fmt!r} != {PIX_FMT}", failures)
-        _require(probe, probe.width == want_w and probe.height == want_h, f"resolution {probe.width}x{probe.height} != {want_w}x{want_h}", failures)
+        _require(probe.video_codec.lower() == VIDEO_CODEC, f"video codec {probe.video_codec!r} != {VIDEO_CODEC}", failures)
+        _require((probe.video_profile or "").lower() == VIDEO_PROFILE, f"video profile {probe.video_profile!r} != {VIDEO_PROFILE}", failures)
+        _require((probe.pix_fmt or "").lower() == PIX_FMT, f"pix_fmt {probe.pix_fmt!r} != {PIX_FMT}", failures)
+        _require(probe.width == want_w and probe.height == want_h, f"resolution {probe.width}x{probe.height} != {want_w}x{want_h}", failures)
         if probe.fps is not None:
             mismatch = abs(probe.fps - FPS) / FPS > FPS_TOLERANCE
-            _require(probe, not mismatch, f"fps {probe.fps:.2f} != {FPS}", failures)
+            _require(not mismatch, f"fps {probe.fps:.2f} != {FPS}", failures)
 
-    _require(probe, probe.audio_codec is not None, "no audio stream", failures)
+    _require(probe.audio_codec is not None, "no audio stream", failures)
     if probe.audio_codec is not None:
-        _require(probe, probe.audio_codec.lower() == AUDIO_CODEC, f"audio codec {probe.audio_codec!r} != {AUDIO_CODEC}", failures)
-        _require(probe, (probe.audio_profile or "").lower() == AUDIO_PROFILE, f"audio profile {probe.audio_profile!r} != {AUDIO_PROFILE}", failures)
-        _require(probe, probe.sample_rate == AUDIO_SAMPLE_RATE, f"sample rate {probe.sample_rate!r} != {AUDIO_SAMPLE_RATE}", failures)
-        _require(probe, probe.channels == AUDIO_CHANNELS, f"channels {probe.channels!r} != {AUDIO_CHANNELS}", failures)
+        _require(probe.audio_codec.lower() == AUDIO_CODEC, f"audio codec {probe.audio_codec!r} != {AUDIO_CODEC}", failures)
+        _require((probe.audio_profile or "").lower() == AUDIO_PROFILE, f"audio profile {probe.audio_profile!r} != {AUDIO_PROFILE}", failures)
+        _require(probe.sample_rate == AUDIO_SAMPLE_RATE, f"sample rate {probe.sample_rate!r} != {AUDIO_SAMPLE_RATE}", failures)
+        _require(probe.channels == AUDIO_CHANNELS, f"channels {probe.channels!r} != {AUDIO_CHANNELS}", failures)
 
     if timing is not None:
         timing_end = _timing_end(timing)
         if probe.container_duration is not None and timing_end is not None:
             expected = timing_end + OPEN_PADDING_S
             ok = abs(probe.container_duration - expected) <= DURATION_TOLERANCE_S
-            _require(probe, ok, f"duration {probe.container_duration:.2f}s != narration+open {expected:.2f}s", failures)
+            _require(ok, f"duration {probe.container_duration:.2f}s != narration+open {expected:.2f}s", failures)
 
     return CheckResult(kind=kind, failures=tuple(failures))
 
@@ -320,7 +317,7 @@ def check_srt(path: Path) -> CheckResult:
 
 # --- dispatch ---
 
-_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv"}
+_VIDEO_EXTENSIONS = {".mp4"}
 
 
 def check_artifact(path: Path, *, kind: str | None = None, timing: Path | None = None) -> CheckResult:
@@ -335,7 +332,7 @@ def check_artifact(path: Path, *, kind: str | None = None, timing: Path | None =
         return check_timing(path)
     if suffix in _VIDEO_EXTENSIONS:
         kind = kind or "clip"
-        if kind not in ("full", "clip", "short"):
+        if kind not in KIND_RESOLUTION:
             raise ValueError(f"unknown kind {kind!r} (use full, clip, or short)")
         return check_video(path, kind=kind, timing=timing)
     raise ValueError(f"unsupported artifact type {path.name!r} (use .mp4, .srt, or .timing.jsonl)")

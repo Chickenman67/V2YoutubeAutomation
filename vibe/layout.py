@@ -46,14 +46,10 @@ class Layout:
         return self.root / "full.mp4"
 
 
-def resolve_layout(root: Path) -> Layout:
-    return Layout(root=root)
-
-
 def create_layout(root: Path) -> Layout:
     """Create the build layout and write a deterministic manifest. Idempotent."""
-    layout = resolve_layout(root)
-    for sub in (*_LAYOUT_DIRS,):
+    layout = Layout(root=root)
+    for sub in _LAYOUT_DIRS:
         (root / sub).mkdir(parents=True, exist_ok=True)
     write_manifest(layout)
     return layout

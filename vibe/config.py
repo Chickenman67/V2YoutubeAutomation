@@ -29,7 +29,7 @@ AUDIO_CHANNELS = 2
 # narration begins. Narration starts at body start (~1.15 s), so a clip's container
 # duration = OPEN_PADDING_S + narration duration + tail.
 OPEN_PADDING_S = 1.15
-DURATION_TOLERANCE_S = 0.75
+DURATION_TOLERANCE_S = 0.3
 
 # Fixed encoder flags. Same approved inputs -> byte-identical outputs.
 VIDEO_ENCODE_FLAGS = [
