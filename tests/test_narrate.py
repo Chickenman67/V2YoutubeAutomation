@@ -202,3 +202,93 @@ def test_ffmpeg_encoder_bad_audio_raises(ffmpeg_available):
     enc = ffmpeg_encoder()
     with pytest.raises(NarrationError):
         enc([(b"not-an-mp3", 0, 0)], sample_rate=44100, channels=2)
+
+
+import json
+
+from vibe import script
+from vibe.narrate import (
+    SegmentNarration,
+    narrate_approved,
+    narrate_segment,
+)
+
+SCRIPT_1 = (
+    "Here's the thing though, the **rates** is the story everyone is chasing.\n"
+    "Money moves ~ fast.\n"
+    "And every single rate decision reshapes the monthly number.\n"
+)
+
+
+def test_narrate_segment_fake_roundtrip():
+    out = narrate_segment(
+        SCRIPT_1, synthesizer=fake_synthesizer(), encoder=fake_encoder()
+    )
+    assert isinstance(out, SegmentNarration)
+    assert out.mp3_bytes == b"fake-mp3"
+    assert out.timings  # non-empty
+    # cumulative: no gaps between consecutive words of the same chunk
+    for a, b in zip(out.timings, out.timings[1:]):
+        assert b.start_s >= a.end_s
+
+
+def test_narrate_segment_pause_creates_gap():
+    out = narrate_segment(
+        SCRIPT_1, synthesizer=fake_synthesizer(), encoder=fake_encoder()
+    )
+    # the '~' line ("Money moves ~ fast.") has a 300ms pause between 'moves' and 'fast'
+    words = [t.word for t in out.timings]
+    i_fast = words.index("fast.")
+    prev = out.timings[i_fast - 1]
+    gap = out.timings[i_fast].start_s - prev.end_s
+    assert gap >= 0.299
+
+
+def test_narrate_approved_writes_artifacts(tmp_path: Path):
+    lay = layout.create_layout(tmp_path)
+    lay.scripts.mkdir(parents=True, exist_ok=True)
+    idx = {
+        "video": "test",
+        "scripts": [
+            {"index": 1, "file": "segment-1.txt", "word_count": 210,
+             "status": script.STATUS_APPROVED, "attempts": 1, "violations": []},
+            {"index": 2, "file": "segment-2.txt", "word_count": 0,
+             "status": script.STATUS_NEEDS_HUMAN, "attempts": 3, "violations": []},
+        ],
+    }
+    (lay.scripts / "index.json").write_text(json.dumps(idx), encoding="utf-8")
+    (lay.scripts / "segment-1.txt").write_text(SCRIPT_1, encoding="utf-8")
+    (lay.scripts / "segment-2.txt").write_text("bad", encoding="utf-8")
+
+    results = narrate_approved(lay, synthesizer=fake_synthesizer(), encoder=fake_encoder())
+    assert [r.index for r in results] == [1, 2]
+    assert results[0].ok and results[1].ok is False
+    mp3 = lay.narration / "segment-1.mp3"
+    timing = lay.narration / "segment-1.timing.jsonl"
+    assert mp3.read_bytes() == b"fake-mp3"
+    assert timing.is_file()
+    assert "segment-1.mp3: OK" in results[0].message
+    assert "skipped" in results[1].message
+    assert not (lay.narration / "segment-2.mp3").exists()
+
+
+def test_narrate_approved_synth_failure_writes_no_partial(tmp_path: Path, monkeypatch):
+    lay = layout.create_layout(tmp_path)
+    lay.scripts.mkdir(parents=True, exist_ok=True)
+    idx = {
+        "video": "test",
+        "scripts": [
+            {"index": 1, "file": "segment-1.txt", "word_count": 210,
+             "status": script.STATUS_APPROVED, "attempts": 1, "violations": []},
+        ],
+    }
+    (lay.scripts / "index.json").write_text(json.dumps(idx), encoding="utf-8")
+    (lay.scripts / "segment-1.txt").write_text(SCRIPT_1, encoding="utf-8")
+
+    def _boom(text, *, voice, rate, volume):
+        raise NarrationError("boom")
+
+    results = narrate_approved(lay, synthesizer=_boom, encoder=fake_encoder())
+    assert results[0].ok is False and "boom" in results[0].message
+    assert not (lay.narration / "segment-1.mp3").exists()
+    assert not (lay.narration / "segment-1.timing.jsonl").exists()

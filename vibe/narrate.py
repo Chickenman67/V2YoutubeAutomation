@@ -11,13 +11,15 @@ never present in output.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, NamedTuple, Protocol
+from pathlib import Path
+from typing import Any, Literal, NamedTuple, Protocol, cast
 
-from vibe import config
+from . import config, layout, script
 
 ChunkKind = Literal["base", "keyword", "figure", "gold", "pause"]
 
@@ -238,3 +240,86 @@ def ffmpeg_encoder(*, bitrate: str = config.NARRATION_MP3_BITRATE) -> Encoder:
         return proc.stdout
 
     return _enc
+
+
+@dataclass(frozen=True)
+class SegmentNarration:
+    mp3_bytes: bytes
+    timings: tuple[WordTiming, ...]
+
+
+@dataclass(frozen=True)
+class SegmentResult:
+    index: int
+    status: str
+    ok: bool
+    message: str
+
+
+def narrate_segment(
+    script_text: str,
+    *,
+    synthesizer: Synthesizer,
+    encoder: Encoder,
+) -> SegmentNarration:
+    """Synthesize one segment's script into audio bytes + cumulative word timing."""
+    units: list[tuple[bytes, int, int]] = []
+    chunk_events: list[Sequence[WordTiming]] = []
+    chunks: list[Chunk] = []
+    for line in script_text.splitlines():
+        if not line.strip():
+            continue
+        for chunk in parse_line(line):
+            chunks.append(chunk)
+            if chunk.kind == "pause" or not chunk.text.strip():
+                units.append((b"", chunk.pre_silence_ms, chunk.post_silence_ms))
+                chunk_events.append([])
+                continue
+            rate, volume = KNOBS[chunk.kind]
+            audio, words = synthesizer(
+                chunk.text, voice=config.NARRATION_VOICE, rate=rate, volume=volume
+            )
+            units.append((audio, chunk.pre_silence_ms, chunk.post_silence_ms))
+            chunk_events.append(words)
+    audio_bytes = encoder(
+        units, sample_rate=config.AUDIO_SAMPLE_RATE, channels=config.AUDIO_CHANNELS
+    )
+    timings = tuple(build_word_timings(chunks, chunk_events))
+    return SegmentNarration(mp3_bytes=audio_bytes, timings=timings)
+
+
+def _write_atomic(path: Path, payload: bytes) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_bytes(payload)
+    os.replace(tmp, path)
+
+
+def narrate_approved(
+    lay: layout.Layout,
+    *,
+    synthesizer: Synthesizer,
+    encoder: Encoder,
+) -> list[SegmentResult]:
+    """Narrate every `approved` segment; skip others; write `.mp3` + `.timing.jsonl`."""
+    idx = script.read_index(lay)
+    rows = cast(list[object], idx["scripts"])
+    results: list[SegmentResult] = []
+    for row in rows:
+        rec = cast(dict[str, object], row)
+        n = int(cast(Any, rec["index"]))
+        status = str(rec["status"])
+        mp3 = lay.narration / f"segment-{n}.mp3"
+        timing = lay.narration / f"segment-{n}.timing.jsonl"
+        if status != script.STATUS_APPROVED:
+            results.append(SegmentResult(n, status, False, f"segment-{n}.mp3: skipped ({status})"))
+            continue
+        text = (lay.scripts / str(rec["file"])).read_text(encoding="utf-8")
+        try:
+            seg = narrate_segment(text, synthesizer=synthesizer, encoder=encoder)
+        except NarrationError as exc:
+            results.append(SegmentResult(n, status, False, f"segment-{n}.mp3: error: {exc}"))
+            continue
+        _write_atomic(mp3, seg.mp3_bytes)
+        _write_atomic(timing, timing_jsonl(seg.timings).encode("utf-8"))
+        results.append(SegmentResult(n, status, True, f"segment-{n}.mp3: OK"))
+    return results
