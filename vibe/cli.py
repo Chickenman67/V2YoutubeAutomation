@@ -14,7 +14,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__, check, discover, layout, script
+from . import __version__, check, discover, layout, narrate, script
 
 USAGE = "a video needs a thesis"
 
@@ -23,6 +23,12 @@ def _select_script_author() -> script.Author:
     if os.environ.get("VIBE_SCRIPT_AUTHOR") == "failing":
         return script.failing_author
     return script.author_segment
+
+
+def _select_narrator() -> tuple[narrate.Synthesizer, narrate.Encoder]:
+    if os.environ.get("VIBE_NARRATOR") == "fake":
+        return narrate.fake_synthesizer(), narrate.fake_encoder()
+    return narrate.edge_tts_synthesizer(), narrate.ffmpeg_encoder()
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -56,6 +62,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="paired .timing.jsonl; check clip duration matches its narration",
     )
     ck.set_defaults(_handler=_cmd_check)
+
+    nar = sub.add_parser("narrate", help="synthesize narration for approved segments")
+    nar.add_argument("--build", type=Path, default=Path("build"), metavar="DIR",
+                     help="build root with scripts/index.json (default: ./build)")
+    nar.set_defaults(_handler=_cmd_narrate)
     return parser
 
 
@@ -109,6 +120,21 @@ def _cmd_make(args: argparse.Namespace) -> int:
     else:
         script.approve_scripts(created, approve=True)  # non-interactive: auto-approve
     return 0
+
+
+def _cmd_narrate(args: argparse.Namespace) -> int:
+    lay = layout.Layout(root=args.build)
+    if not (lay.scripts / "index.json").is_file():
+        print(f"vibe narrate: no {lay.scripts.joinpath('index.json').as_posix()}; "
+              f"run `vibe make` first", file=sys.stderr)
+        return 2
+    synthesizer, encoder = _select_narrator()
+    results = narrate.narrate_approved(lay, synthesizer=synthesizer, encoder=encoder)
+    failed = False
+    for res in results:
+        print(res.message, file=sys.stderr if not res.ok else sys.stdout)
+        failed = failed or (not res.ok and res.status == script.STATUS_APPROVED)
+    return 1 if failed else 0
 
 
 def _cmd_check(args: argparse.Namespace) -> int:

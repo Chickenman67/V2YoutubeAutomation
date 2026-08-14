@@ -2,6 +2,7 @@
 
 **Status:** Decided spec, adopted by this effort. Source: wayfinder ticket #7 (HITL, resolved).
 **Input:** a segment narration script produced by the Script Standard (`docs/specs/script-standard.md`), carrying the inline markup `**keyword**`, `##figure##`, `**gold**`, and `~`.
+**Marker reality (2026-08):** the current templated author (`vibe/script.py`) emits only `**keyword**`. `##figure##`, `**gold**`, and `~` are fully handled by the narration pipeline (chunking, knobs, silence, timing) but do not appear in current output until the author produces figures/pauses. Downstream consumers (assembly/captions) must not assume figures are always present.
 **Downstream consumer:** #8 Assembly + captions (consumes the audio + word-timing artifacts defined here).
 
 ---

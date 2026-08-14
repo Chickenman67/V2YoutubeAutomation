@@ -18,7 +18,7 @@ from . import config
 MANIFEST_NAME = "manifest.json"
 
 # Directories created under the build root, per assembly.md §9.
-_LAYOUT_DIRS = ("segments", "shorts", "cc", "scripts")
+_LAYOUT_DIRS = ("segments", "shorts", "cc", "scripts", "narration")
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,10 @@ class Layout:
     @property
     def scripts(self) -> Path:
         return self.root / "scripts"
+
+    @property
+    def narration(self) -> Path:
+        return self.root / "narration"
 
     @property
     def full_video(self) -> Path:
