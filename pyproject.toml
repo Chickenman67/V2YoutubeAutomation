@@ -7,7 +7,7 @@ name = "vibe"
 version = "0.1.0"
 description = "Agent-driven YouTube financial explainer pipeline (CLI seam)"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["edge-tts"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "mypy>=1.11", "ruff>=0.6"]

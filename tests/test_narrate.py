@@ -162,3 +162,43 @@ def test_fake_encoder_deterministic():
     assert enc([(b"abc", 0, 450)], sample_rate=44100, channels=2) == enc(
         [(b"abc", 0, 450)], sample_rate=44100, channels=2
     )
+
+
+import subprocess
+
+import pytest
+
+from vibe.narrate import NarrationError, edge_tts_synthesizer, ffmpeg_encoder
+
+
+def test_edge_tts_synthesizer_factory_is_callable():
+    assert callable(edge_tts_synthesizer())
+
+
+def _tiny_mp3() -> bytes:
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
+            "-t", "0.1", "-c:a", "libmp3lame", "-f", "mp3", "pipe:1",
+        ],
+        capture_output=True,
+        check=True,
+    )
+    return proc.stdout
+
+
+def test_ffmpeg_encoder_roundtrip(ffmpeg_available):
+    if not ffmpeg_available:
+        pytest.skip("ffmpeg/ffprobe not on PATH")
+    enc = ffmpeg_encoder()
+    unit = (_tiny_mp3(), 120, 450)
+    out = enc([unit], sample_rate=44100, channels=2)
+    assert out[:3] == b"ID3" or b"\xff\xfb" in out[:32]  # mp3 frame magic
+
+
+def test_ffmpeg_encoder_bad_audio_raises(ffmpeg_available):
+    if not ffmpeg_available:
+        pytest.skip("ffmpeg/ffprobe not on PATH")
+    enc = ffmpeg_encoder()
+    with pytest.raises(NarrationError):
+        enc([(b"not-an-mp3", 0, 0)], sample_rate=44100, channels=2)

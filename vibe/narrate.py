@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, NamedTuple, Protocol
+
+from vibe import config
 
 ChunkKind = Literal["base", "keyword", "figure", "gold", "pause"]
 
@@ -150,5 +153,88 @@ def fake_encoder() -> Encoder:
 
     def _enc(units: list[tuple[bytes, int, int]], *, sample_rate: int, channels: int) -> bytes:
         return b"fake-mp3"
+
+    return _enc
+
+
+class NarrationError(RuntimeError):
+    """Raised when real TTS synthesis or the ffmpeg codec fails."""
+
+
+def edge_tts_synthesizer(voice: str = config.NARRATION_VOICE) -> Synthesizer:
+    """Real synthesizer via edge-tts (requires network)."""
+
+    import edge_tts
+
+    def _synth(text: str, *, voice: str = voice, rate: str = "0%", volume: str = "0%") -> SynthResult:
+        try:
+            comm = edge_tts.Communicate(
+                text, voice, rate=rate, volume=volume, boundary="WordBoundary"
+            )
+            audio = bytearray()
+            words: list[WordTiming] = []
+            for chunk in comm.stream_sync():
+                kind = chunk.get("type", "")
+                if kind == "audio":
+                    audio += chunk.get("data", b"")
+                elif kind == "WordBoundary":
+                    offset = float(chunk.get("offset", 0)) / 1e7
+                    duration = float(chunk.get("duration", 0)) / 1e7
+                    words.append(WordTiming(str(chunk.get("text", "")), offset, offset + duration))
+            if not audio:
+                raise NarrationError("edge-tts returned no audio")
+            return (bytes(audio), tuple(words))
+        except NarrationError:
+            raise
+        except Exception as exc:  # network, auth, service errors
+            raise NarrationError(f"edge-tts synthesis failed: {exc}") from exc
+
+    return _synth
+
+
+def _decode_mp3(audio: bytes, sample_rate: int, channels: int) -> bytes:
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-i", "pipe:0",
+            "-f", "s16le", "-ar", str(sample_rate), "-ac", str(channels), "pipe:1",
+        ],
+        input=audio,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise NarrationError(f"ffmpeg decode failed: {proc.stderr[-300:]}")  # type: ignore[str-bytes-safe]  # bytes repr intended
+    return proc.stdout
+
+
+def ffmpeg_encoder(*, bitrate: str = config.NARRATION_MP3_BITRATE) -> Encoder:
+    """Real encoder: mp3 chunks -> s16le PCM -> silence -> concat -> mp3."""
+
+    def _enc(units: list[tuple[bytes, int, int]], *, sample_rate: int, channels: int) -> bytes:
+        frame = sample_rate * channels * 2  # bytes per second of s16le PCM
+        pcm = bytearray()
+        for audio, pre_ms, post_ms in units:
+            pre = (frame * pre_ms) // 1000
+            post = (frame * post_ms) // 1000
+            pcm += b"\x00" * (pre - pre % 2)
+            if audio:
+                pcm += _decode_mp3(audio, sample_rate, channels)
+            pcm += b"\x00" * (post - post % 2)
+        try:
+            proc = subprocess.run(
+                [
+                    "ffmpeg", "-v", "error",
+                    "-f", "s16le", "-ar", str(sample_rate), "-ac", str(channels), "-i", "pipe:0",
+                    "-c:a", "libmp3lame", "-b:a", bitrate, "-f", "mp3", "pipe:1",
+                ],
+                input=bytes(pcm),
+                capture_output=True,
+                check=False,
+            )
+        except OSError as exc:
+            raise NarrationError(f"ffmpeg not found: {exc}") from exc
+        if proc.returncode != 0:
+            raise NarrationError(f"ffmpeg encode failed: {proc.stderr[-300:]}")  # type: ignore[str-bytes-safe]  # bytes repr intended
+        return proc.stdout
 
     return _enc
