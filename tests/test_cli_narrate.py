@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from vibe import script
+import vibe.cli
+from vibe import narrate, script
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -51,3 +52,18 @@ def test_narrate_missing_index_exits_2(run_cli, tmp_path: Path):
                    extra_env={"VIBE_NARRATOR": "fake"})
     assert proc.returncode == 2
     assert "index.json" in proc.stderr
+
+
+def test_narrate_synth_failure_exits_1(run_cli, tmp_path: Path, monkeypatch, capsys):
+    build = _make_approved_build(run_cli, tmp_path)
+
+    def raiser(text, *, voice, rate, volume):
+        raise narrate.NarrationError("boom")
+
+    monkeypatch.setattr(vibe.cli, "_select_narrator",
+                        lambda: (raiser, narrate.fake_encoder()))
+    rc = vibe.cli.main(["narrate", "--build", str(build)])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "boom" in captured.err
+    assert not (build / "narration" / "segment-1.mp3").exists()

@@ -195,15 +195,18 @@ def edge_tts_synthesizer(voice: str = config.NARRATION_VOICE) -> Synthesizer:
 
 
 def _decode_mp3(audio: bytes, sample_rate: int, channels: int) -> bytes:
-    proc = subprocess.run(
-        [
-            "ffmpeg", "-v", "error", "-i", "pipe:0",
-            "-f", "s16le", "-ar", str(sample_rate), "-ac", str(channels), "pipe:1",
-        ],
-        input=audio,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg", "-v", "error", "-i", "pipe:0",
+                "-f", "s16le", "-ar", str(sample_rate), "-ac", str(channels), "pipe:1",
+            ],
+            input=audio,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise NarrationError(f"ffmpeg not found: {exc}") from exc
     if proc.returncode != 0:
         raise NarrationError(f"ffmpeg decode failed: {proc.stderr[-300:]}")  # type: ignore[str-bytes-safe]  # bytes repr intended
     return proc.stdout
@@ -313,10 +316,10 @@ def narrate_approved(
         if status != script.STATUS_APPROVED:
             results.append(SegmentResult(n, status, False, f"segment-{n}.mp3: skipped ({status})"))
             continue
-        text = (lay.scripts / str(rec["file"])).read_text(encoding="utf-8")
         try:
+            text = (lay.scripts / str(rec["file"])).read_text(encoding="utf-8")
             seg = narrate_segment(text, synthesizer=synthesizer, encoder=encoder)
-        except NarrationError as exc:
+        except (NarrationError, OSError) as exc:
             results.append(SegmentResult(n, status, False, f"segment-{n}.mp3: error: {exc}"))
             continue
         _write_atomic(mp3, seg.mp3_bytes)
