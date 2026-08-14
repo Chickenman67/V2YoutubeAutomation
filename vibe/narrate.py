@@ -14,7 +14,7 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, Protocol
 
 ChunkKind = Literal["base", "keyword", "figure", "gold", "pause"]
 
@@ -118,3 +118,37 @@ def timing_jsonl(timings: Sequence[WordTiming]) -> str:
         for t in timings
     )
     return "\n".join(lines) + "\n"
+
+
+class Synthesizer(Protocol):
+    def __call__(self, text: str, *, voice: str, rate: str, volume: str) -> SynthResult: ...
+
+
+class Encoder(Protocol):
+    def __call__(self, units: list[tuple[bytes, int, int]], *, sample_rate: int, channels: int) -> bytes: ...
+
+
+SynthResult = tuple[bytes, tuple[WordTiming, ...]]
+
+
+def fake_synthesizer(voice: str = "fake-voice") -> Synthesizer:
+    """Deterministic offline synthesizer for tests and the CLI fake seam."""
+
+    def _synth(text: str, *, voice: str = voice, rate: str = "0%", volume: str = "0%") -> SynthResult:
+        words: list[WordTiming] = []
+        t = 0.0
+        for w in text.split():
+            words.append(WordTiming(w, round(t, 3), round(t + 0.2, 3)))
+            t += 0.25
+        return (b"fake-audio", tuple(words))
+
+    return _synth
+
+
+def fake_encoder() -> Encoder:
+    """Deterministic offline encoder for tests and the CLI fake seam."""
+
+    def _enc(units: list[tuple[bytes, int, int]], *, sample_rate: int, channels: int) -> bytes:
+        return b"fake-mp3"
+
+    return _enc

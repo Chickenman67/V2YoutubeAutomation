@@ -138,3 +138,27 @@ def test_build_word_timings_pause_chunk_advances_cursor():
 def test_timing_jsonl_matches_check_contract():
     out = timing_jsonl([WordTiming("rates", 0.0, 0.2), WordTiming("now", 0.2, 0.4)])
     assert out == '{"word": "rates", "start_s": 0.0, "end_s": 0.2}\n{"word": "now", "start_s": 0.2, "end_s": 0.4}\n'
+
+
+from vibe.narrate import fake_encoder, fake_synthesizer
+
+
+def test_fake_synthesizer_deterministic_words():
+    synth = fake_synthesizer()
+    a = synth("rates are up", voice="v", rate="-8%", volume="+12%")
+    b = synth("rates are up", voice="v", rate="-8%", volume="+12%")
+    assert a == b
+    assert a[0] == b"fake-audio"
+    assert a[1] == (
+        WordTiming("rates", 0.0, 0.2),
+        WordTiming("are", 0.25, 0.45),
+        WordTiming("up", 0.5, 0.7),
+    )
+
+
+def test_fake_encoder_deterministic():
+    enc = fake_encoder()
+    assert enc([(b"abc", 0, 450)], sample_rate=44100, channels=2) == b"fake-mp3"
+    assert enc([(b"abc", 0, 450)], sample_rate=44100, channels=2) == enc(
+        [(b"abc", 0, 450)], sample_rate=44100, channels=2
+    )
