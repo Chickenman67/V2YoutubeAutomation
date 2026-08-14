@@ -47,6 +47,11 @@ VIDEO_ENCODE_FLAGS = [
 AUDIO_ENCODE_FLAGS = ["-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-ac", "2"]
 MUX_FLAGS = ["-movflags", "+faststart"]
 
+# Narration (docs/specs/narration.md): the fixed voice and the deterministic mp3
+# encode bitrate. Downstream stages read these; `vibe narrate` encodes to them.
+NARRATION_VOICE = "en-US-ChristopherNeural"
+NARRATION_MP3_BITRATE = "192k"
+
 
 def contract_dict() -> dict[str, object]:
     """The media contract as a JSON-serialisable dict (recorded in the manifest)."""
