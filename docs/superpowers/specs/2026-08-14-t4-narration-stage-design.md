@@ -20,26 +20,27 @@ New pure module `vibe/narrate.py` plus a thin seam. Split: the chunking/classifi
 - `Chunk` — `(text: str, kind: ChunkKind, pre_silence_ms: int, post_silence_ms: int)`.
   `ChunkKind ∈ {base, keyword, figure, gold, pause}`.
 - `parse_line(line: str) -> list[Chunk]` — splits a script line on the four markers into ordered chunks, markers **never appear in chunk.text**; `~` becomes a `pause` chunk. Unmarked text is `base`. Empty text yield is handled (a `**gold**` that wraps a figure wins classification per spec §4).
-- `KNOBS: dict[ChunkKind, RateVolume]` — the narration spec §4 table:
+- `KNOBS: dict[ChunkKind, tuple[str, str]]` — the narration spec §4 table:
   - base `rate "0%", volume "0%"`
   - keyword `-8%`, `+12%`
   - figure `-5%`, `+10%`
   - gold `-8%`, `+15%`
-  Silence (ms): keyword 120 *before*; figure/gold 450 *after*; pause 300.
-- `build_word_timings(chunks_result, chunk_durations) -> list[WordTiming]` — pure cumulative timing math: renders `(word, start_s, end_s)` in order, adding each chunk's decoded duration and the inserted silence gaps, so timing stays cumulative across chunks/silence (spec §5). `WordTiming = (word, start_s, end_s)`, matching `check.py`'s `_TIMING_KEYS` exactly.
+- `SILENCE_MS: dict[ChunkKind, tuple[int, int]]` — `(pre_ms, post_ms)` per kind: keyword 120 *before*; figure/gold 450 *after*; pause 300.
+- `build_word_timings(chunks, chunk_events) -> list[WordTiming]` — pure cumulative timing math: renders `(word, start_s, end_s)` in order, adding each chunk's decoded duration and the inserted silence gaps, so timing stays cumulative across chunks/silence (spec §5). `WordTiming = (word, start_s, end_s)`, matching `check.py`'s `_TIMING_KEYS` exactly.
+- `timing_jsonl(timings) -> str` — serializes word timings to the `.timing.jsonl` contract.
 
 ### Seams (Protocols)
 
-- `Synthesizer.__call__(text, *, voice, rate, volume, boundary="WordBoundary") -> SynthResult` —
-  `SynthResult = (audio_bytes: bytes, words: list[WordBoundaryEvent])`.
-  Real impl wraps `edge_tts.Communicate` streaming; **fake** in tests returns canned bytes + fixed words.
-- `Encoder.__call__(segments: list[(audio_bytes, pre_silence_ms, post_silence_ms)], *, sample_rate, channels) -> bytes` —
-  decodes each chunk to PCM, prepends/inserts silence, concatenates, re-encodes to deterministic mp3. Real impl shells to ffmpeg with the fixed flags from `config.py`; fake returns fixed bytes for tests.
+- `Synthesizer.__call__(text, *, voice, rate, volume) -> SynthResult` —
+  `SynthResult = (audio_bytes: bytes, words: tuple[WordTiming, ...])`.
+  Real impl `edge_tts_synthesizer()` wraps `edge_tts.Communicate` streaming with `boundary="WordBoundary"`; **fake** `fake_synthesizer()` in tests returns canned bytes + fixed words.
+- `Encoder.__call__(units: list[(audio_bytes, pre_silence_ms, post_silence_ms)], *, sample_rate, channels) -> bytes` —
+  decodes each chunk to PCM, prepends/inserts silence, concatenates, re-encodes to deterministic mp3. Real impl `ffmpeg_encoder()` shells to ffmpeg with the fixed flags from `config.py`; fake `fake_encoder()` returns fixed bytes for tests.
 
 ### Orchestrator
 
-- `narrate_segment(script_text, *, synthesizer, encoder, out_dir) -> SegmentAudio(out_mp3, out_timing)` — parses the script into lines → parses each line into chunks → synthesizes speech chunks (`base`/`keyword`/`figure`/`gold`) via the seam → concatenates/encodes via the seam → writes `.mp3` + `.timing.jsonl` (temp-then-rename so no partial artifact). A `pause` chunk contributes **only** silence (300 ms) to the encoder — no synthesis call, no words. Writes via `out_dir` into the `narrate` build layout.
-- `narrate_approved(brief, lay: layout.Layout, *, synthesizer, encoder) -> list[SegmentResult]` — reads `scripts/index.json`, narrates each `approved` segment; skips `needs-human`/`ready`-not-approved with a warning.
+- `narrate_segment(script_text, *, synthesizer, encoder) -> SegmentNarration(mp3_bytes, timings)` — parses the script into lines → parses each line into chunks → synthesizes speech chunks (`base`/`keyword`/`figure`/`gold`) via the seam → concatenates/encodes via the seam → returns in-memory `mp3_bytes` + cumulative `timings` (no I/O). A `pause` chunk contributes **only** silence (300 ms) to the encoder — no synthesis call, no words.
+- `narrate_approved(lay: layout.Layout, *, synthesizer, encoder) -> list[SegmentResult]` — reads `scripts/index.json`, narrates each `approved` segment, and writes `.mp3` + `.timing.jsonl` (temp-then-rename so no partial artifact) into the `narrate` build layout; skips `needs-human`/`ready`-not-approved with a warning.
 
 ## 3. Artifacts & build layout
 
@@ -80,12 +81,12 @@ vibe narrate --build DIR  # point at a different build root (default ./build)
 ### Error handling
 
 - Missing index/build → exit 2 with message.
-- edge-tts failure (network/auth) per segment → stderr, exit 1, no partial file (temp-then-rename); completed segments stay.
+- edge-tts/ffmpeg failure (network/auth/codec) per segment surfaces as `NarrationError` → stderr, exit 1, no partial file (temp-then-rename); completed segments stay.
 - `needs-human` / unapproved → skip + warning, exit 0.
 
 ### Doc fix (from T3 handoff)
 
-- Add a short note to `docs/specs/narration.md` §5 clarifying the marker reality: the current T3 author emits only `**keyword**`; `##figure##`/`**gold**` are handled by the pipeline but only appear once the author produces figures. Prevents downstream (assembly/captions) from assuming figures always present.
+- Add a short note to `docs/specs/narration.md` §1 (after the "**Input:**" line) clarifying the marker reality: the current T3 author emits only `**keyword**`; `##figure##`/`**gold**`/`~` are handled by the pipeline but only appear once the author produces figures/pauses. Prevents downstream (assembly/captions) from assuming figures always present.
 
 ### Testing (offline, fixture-driven)
 
