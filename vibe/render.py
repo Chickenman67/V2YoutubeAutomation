@@ -10,7 +10,7 @@ rendered; they only style captions.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import NamedTuple
+from typing import NamedTuple, Protocol
 
 from . import config
 from .narrate import ChunkKind, WordTiming, parse_line
@@ -135,3 +135,56 @@ def plan_frames(
                 caption = _build_caption(active[-1], footline)
         specs.append(FrameSpec(i, round(t, 6), scale, caption))
     return tuple(specs)
+
+
+def resolve_font(size: int, *, font: str | None = None) -> object:
+    """A PIL font: a real outline font when `font` names a TTF, else the default.
+
+    Lazy-imports Pillow so the module stays importable where Pillow is absent; the
+    returned object is Duck-typed (has `getbbox`/`draw`), so callers need no PIL types.
+    """
+    from PIL import ImageFont
+
+    if font:
+        return ImageFont.truetype(font, size)
+    return ImageFont.load_default(size=size)
+
+
+class ImageRenderer(Protocol):
+    def __call__(
+        self,
+        specs: tuple[FrameSpec, ...],
+        hero: object,
+        *,
+        palette: dict[str, str],
+    ) -> tuple[bytes, ...]: ...
+
+
+class Encoder(Protocol):
+    def __call__(
+        self,
+        frames: tuple[bytes, ...],
+        *,
+        width: int,
+        height: int,
+        fps: int,
+        audio: bytes,
+    ) -> bytes: ...
+
+
+def fake_renderer() -> ImageRenderer:
+    """Deterministic offline frame renderer for tests and the CLI fake seam."""
+
+    def _r(specs: tuple[FrameSpec, ...], hero: object, *, palette: dict[str, str]) -> tuple[bytes, ...]:
+        return tuple(b"frame-%d" % s.frame_index for s in specs)
+
+    return _r
+
+
+def fake_encoder() -> Encoder:
+    """Deterministic offline mux/encode for tests and the CLI fake seam."""
+
+    def _enc(frames: tuple[bytes, ...], *, width: int, height: int, fps: int, audio: bytes) -> bytes:
+        return b"fake-mp4"
+
+    return _enc

@@ -13,6 +13,7 @@ from vibe.render import (
     Caption,
     CaptionLine,
     CaptionWord,
+    FrameSpec,
     StyledSpan,
     _active_captions,
     parse_caption_line,
@@ -170,3 +171,33 @@ def test_plan_frames_figure_words_in_caption_window():
     body = [f for f in spec if f.caption is not None]
     # the figure word rides inside the caption's window (word timing == force-visible)
     assert body[0].caption.figure == StyledSpan("5.25", "figure")
+
+
+import pytest
+
+
+def test_resolve_font_default_returns_font():
+    pytest.importorskip("PIL")
+    from vibe.render import resolve_font
+
+    font = resolve_font(32)
+    assert callable(getattr(font, "getbbox", None))
+
+
+def test_fake_renderer_deterministic():
+    from vibe.render import fake_renderer
+
+    spec = FrameSpec(0, 0.0, 1.0, None)
+    r = fake_renderer()
+    assert r((spec,), hero=b"hero", palette=config.PALETTE) == \
+        r((spec,), hero=b"hero", palette=config.PALETTE)
+
+
+def test_fake_encoder_deterministic():
+    from vibe.render import fake_encoder
+
+    frames = (b"f0", b"f1")
+    e = fake_encoder()
+    first = e(frames, width=1920, height=1080, fps=30, audio=b"a")
+    assert first == b"fake-mp4"
+    assert e(frames, width=1920, height=1080, fps=30, audio=b"a") == first
