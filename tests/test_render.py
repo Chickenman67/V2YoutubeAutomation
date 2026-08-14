@@ -8,6 +8,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from vibe import config, layout
+from vibe.narrate import WordTiming
+from vibe.render import (
+    Caption,
+    CaptionLine,
+    CaptionWord,
+    StyledSpan,
+    _active_captions,
+    parse_caption_line,
+    plan_frames,
+    zoom_scale,
+)
 
 
 def test_layout_exposes_hero_still(tmp_path: Path):
@@ -27,9 +38,6 @@ def test_render_config_constants():
     assert config.PALETTE["positive"] == "#1F9D82"
     assert config.PALETTE["risk"] == "#E4572E"
     assert config.PALETTE["gold"] == "#D4AF37"
-
-from vibe.narrate import WordTiming
-from vibe.render import CaptionLine, parse_caption_line, zoom_scale
 
 
 def _words(items):
@@ -95,3 +103,70 @@ def test_parse_caption_line_pause_adds_gap_not_word():
     cap = parse_caption_line("Money ~ fast", timings)
     assert _words(cap.spans) == [("Money", "base"), ("fast", "base")]
     assert cap.start_s == 0.0 and cap.end_s == 0.7
+
+
+def _cl(spans, start, end, has_figure=False):
+    return CaptionLine(tuple(spans), start, end, has_figure)
+
+
+def _w(surface, kind, s, e):
+    return CaptionWord(surface, kind, s, e)
+
+
+def test_active_captions_window_and_hold():
+    l1 = _cl((_w("a", "base", 0.0, 0.2), _w("b", "base", 0.2, 0.5)), 0.0, 0.5)
+    l2 = _cl((_w("c", "base", 0.8, 1.0),), 0.8, 1.0)
+    lines = [l1, l2]
+    assert _active_captions(0.3, lines, min_hold=1.2) == [l1]
+    assert _active_captions(0.6, lines, min_hold=1.2) == [l1]
+    assert _active_captions(0.9, lines, min_hold=1.2) == [l1, l2]
+    assert _active_captions(2.5, lines, min_hold=1.2) == []
+
+
+def test_plan_frames_open_has_no_caption_and_zooms():
+    l1 = _cl((_w("a", "base", 0.0, 0.2), _w("b", "base", 0.2, 0.5)), 0.0, 0.5)
+    spec = plan_frames([l1], fps=30, width=1920, height=1080)
+    assert spec[0].caption is None
+    assert spec[0].scale == 1.0
+    assert spec[0].t == 0.0
+
+
+def test_plan_frames_count_covers_open_and_body():
+    l1 = _cl((_w("a", "base", 0.0, 0.5),), 0.0, 0.5)
+    spec = plan_frames([l1], fps=30, width=1920, height=1080)
+    duration = 1.15 + 0.5
+    assert len(spec) == round(duration * 30)
+    assert spec[-1].t == round((len(spec) - 1) / 30, 6)
+
+
+def test_plan_frames_body_shows_caption():
+    l1 = _cl((_w("a", "base", 0.0, 0.2), _w("b", "base", 0.2, 0.5)), 0.0, 0.5)
+    spec = plan_frames([l1], fps=30, width=1920, height=1080)
+    body = [f for f in spec if f.caption is not None]
+    assert body
+    assert all(f.caption.spans == (StyledSpan("a", "base"), StyledSpan("b", "base")) for f in body)
+    assert spec[-1].scale == 1.10
+
+
+def test_plan_frames_figure_captured_with_footline():
+    lf = _cl(
+        (_w("Up", "base", 0.0, 0.2), _w("5.25", "figure", 0.2, 0.4), _w("now", "base", 0.4, 0.6)),
+        0.0, 0.6, has_figure=True,
+    )
+    spec = plan_frames([lf], fps=30, width=1920, height=1080, footline="Source: Yahoo Finance")
+    body = [f for f in spec if f.caption is not None]
+    cap = body[0].caption
+    assert isinstance(cap, Caption)
+    assert cap.figure == StyledSpan("5.25", "figure")
+    assert cap.footline == "Source: Yahoo Finance"
+
+
+def test_plan_frames_figure_words_in_caption_window():
+    lf = _cl(
+        (_w("5.25", "figure", 0.2, 0.4),),
+        0.2, 0.4, has_figure=True,
+    )
+    spec = plan_frames([lf], fps=30, width=1920, height=1080)
+    body = [f for f in spec if f.caption is not None]
+    # the figure word rides inside the caption's window (word timing == force-visible)
+    assert body[0].caption.figure == StyledSpan("5.25", "figure")

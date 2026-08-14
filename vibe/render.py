@@ -70,3 +70,68 @@ def zoom_scale(t: float) -> float:
     p = t / config.ZOOM_SECONDS
     eased = 1.0 - (1.0 - p) ** 3
     return round(config.ZOOM_START + (config.ZOOM_END - config.ZOOM_START) * eased, 4)
+
+
+class StyledSpan(NamedTuple):
+    text: str
+    kind: ChunkKind
+
+
+class Caption(NamedTuple):
+    spans: tuple[StyledSpan, ...]
+    figure: StyledSpan | None
+    footline: str | None
+
+
+class FrameSpec(NamedTuple):
+    frame_index: int
+    t: float
+    scale: float
+    caption: Caption | None
+
+
+def _active_captions(
+    t: float, lines: Sequence[CaptionLine], *, min_hold: float = config.MIN_CAPTION_HOLD_S
+) -> list[CaptionLine]:
+    """The caption lines whose window `[start, end + hold]` covers body-time `t`."""
+    active = [line for line in lines if line.start_s <= t <= line.end_s + min_hold]
+    return active
+
+
+def _build_caption(line: CaptionLine, footline: str | None) -> Caption:
+    spans = tuple(StyledSpan(w.surface, w.kind) for w in line.spans)
+    figure = next((StyledSpan(w.surface, w.kind) for w in line.spans if w.kind == "figure"), None)
+    return Caption(spans, figure, footline if line.has_figure else None)
+
+
+def plan_frames(
+    lines: Sequence[CaptionLine],
+    *,
+    fps: int,
+    width: int,
+    height: int,
+    open_s: float = config.OPEN_PADDING_S,
+    min_hold: float = config.MIN_CAPTION_HOLD_S,
+    footline: str | None = None,
+) -> tuple[FrameSpec, ...]:
+    """The deterministic per-frame plan: zoom open, then word-timed captions.
+
+    `t` is clip time (0 = clip start). The narration body begins at `open_s`; caption
+    body-times offset by `open_s`. Total clip length = `open_s +` last word end, so the
+    container honors the media contract (`OPEN_PADDING_S +` narration end).
+    """
+    last_end = max((line.end_s for line in lines), default=0.0)
+    duration = open_s + last_end
+    n = round(duration * fps)
+    specs: list[FrameSpec] = []
+    for i in range(n):
+        t = i / fps
+        scale = zoom_scale(t)
+        caption = None
+        if t >= open_s:
+            body_t = t - open_s
+            active = _active_captions(body_t, lines, min_hold=min_hold)
+            if active:
+                caption = _build_caption(active[-1], footline)
+        specs.append(FrameSpec(i, round(t, 6), scale, caption))
+    return tuple(specs)
