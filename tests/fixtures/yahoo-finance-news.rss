@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Yahoo Finance - News</title>
+    <link>https://finance.yahoo.com/news/</link>
+    <description>Financial news</description>
+    <item>
+      <title>Fed keeps rates high and mortgage costs keep climbing</title>
+      <link>https://finance.yahoo.com/economy/article/fed-rates-mortgage-costs</link>
+      <pubDate>Tue, 12 Aug 2026 09:00:00 +0000</pubDate>
+      <category>Economy</category>
+      <category>interest rates</category>
+      <source url="https://finance.yahoo.com">Yahoo Finance</source>
+    </item>
+    <item>
+      <title>Nvidia&#39;s AI chip rally reshapes the semiconductor race</title>
+      <link>https://finance.yahoo.com/markets/article/nvidia-ai-chip-endorsement</link>
+      <pubDate>Tue, 12 Aug 2026 14:30:00 +0000</pubDate>
+      <category>Markets</category>
+      <category>technology</category>
+      <source url="https://finance.yahoo.com">Yahoo Finance</source>
+    </item>
+    <item>
+      <title>Grimaldi acquires Pacific Northwest freight broker in logistics deal</title>
+      <link>https://finance.yahoo.com/business/article/grimaldi-pacific-northwest-freight</link>
+      <pubDate>Mon, 11 Aug 2026 08:00:00 +0000</pubDate>
+      <category>Business</category>
+      <source url="https://finance.yahoo.com">Yahoo Finance</source>
+    </item>
+  </channel>
+</rss>

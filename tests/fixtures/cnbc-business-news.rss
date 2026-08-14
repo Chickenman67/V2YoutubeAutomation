@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>CNBC Business News</title>
+    <link>https://www.cnbc.com/business</link>
+    <description>CNBC business and markets news</description>
+    <item>
+      <title>What the Fed&#39;s steady rates mean for your mortgage</title>
+      <link>https://www.cnbc.com/2026/08/12/fed-steady-rates-mortgage.html</link>
+      <pubDate>Wed, 12 Aug 2026 11:00:00 +0000</pubDate>
+      <category>Federal Reserve</category>
+      <category>interest rates</category>
+      <source url="https://www.cnbc.com">CNBC</source>
+    </item>
+    <item>
+      <title>Inflation cools but rents keep climbing for households</title>
+      <link>https://www.cnbc.com/2026/08/12/inflation-rents-households.html</link>
+      <pubDate>Wed, 12 Aug 2026 16:00:00 +0000</pubDate>
+      <category>Economy</category>
+      <category>housing</category>
+      <source url="https://www.cnbc.com">CNBC</source>
+    </item>
+  </channel>
+</rss>
