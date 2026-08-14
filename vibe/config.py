@@ -52,6 +52,24 @@ MUX_FLAGS = ["-movflags", "+faststart"]
 NARRATION_VOICE = "en-US-ChristopherNeural"
 NARRATION_MP3_BITRATE = "192k"
 
+# Render (docs/research/design-standard.md §5-§6, docs/specs/assembly.md §3-§4):
+# the semantic palette and the caption/zoom constants. PALETTE carries design roles so
+# downstream stages reference one source of truth; the zoom/caption constants drive
+# `vibe render`'s deterministic open and caption holds.
+PALETTE = {
+    "bg": "#F7F4EF",
+    "ink": "#1B1F27",
+    "positive": "#1F9D82",
+    "risk": "#E4572E",
+    "gold": "#D4AF37",
+}
+MIN_CAPTION_HOLD_S = 1.2
+ZOOM_START = 1.0
+ZOOM_END = 1.10
+ZOOM_SECONDS = 0.8
+CAPTION_SIZE = 48
+FOOTLINE_SIZE = 24
+
 
 def contract_dict() -> dict[str, object]:
     """The media contract as a JSON-serialisable dict (recorded in the manifest)."""

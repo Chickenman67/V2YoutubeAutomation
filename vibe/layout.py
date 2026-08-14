@@ -30,6 +30,10 @@ class Layout:
         return self.root / MANIFEST_NAME
 
     @property
+    def hero(self) -> Path:
+        return self.root / "hero.png"
+
+    @property
     def topic_brief(self) -> Path:
         return self.root / "brief.json"
 
