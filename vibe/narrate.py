@@ -10,9 +10,11 @@ never present in output.
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, NamedTuple
 
 ChunkKind = Literal["base", "keyword", "figure", "gold", "pause"]
 
@@ -70,3 +72,49 @@ def parse_line(line: str) -> list[Chunk]:
         else:
             out.append(Chunk(part, "base", 0, 0))
     return out
+
+
+class WordTiming(NamedTuple):
+    word: str
+    start_s: float
+    end_s: float
+
+
+def build_word_timings(
+    chunks: Sequence[Chunk],
+    chunk_events: Sequence[Sequence[WordTiming]],
+) -> list[WordTiming]:
+    """Rebuild cumulative timings across chunks + inserted silence.
+
+    Each `chunk_events[i]` holds chunk-relative word spans (seconds). Speech chunks
+    advance the cursor by their pre/post silence; pause/empty chunks advance by the
+    full (pre + post) silence with no words emitted.
+    """
+    out: list[WordTiming] = []
+    cursor = 0.0
+    for chunk, events in zip(chunks, chunk_events):
+        pre, post = chunk.pre_silence_ms, chunk.post_silence_ms
+        if chunk.kind == "pause" or not chunk.text.strip():
+            cursor += (pre + post) / 1000.0
+            continue
+        cursor += pre / 1000.0
+        local_end = cursor
+        for ev in events:
+            start = cursor + ev.start_s
+            end = cursor + ev.end_s
+            out.append(WordTiming(ev.word, round(start, 3), round(end, 3)))
+            local_end = max(local_end, end)
+        cursor = local_end + post / 1000.0
+    return out
+
+
+def timing_jsonl(timings: Sequence[WordTiming]) -> str:
+    """Serialize word timings to the `.timing.jsonl` contract (`vibe/check.py`)."""
+    lines = (
+        json.dumps(
+            {"word": t.word, "start_s": round(t.start_s, 3), "end_s": round(t.end_s, 3)},
+            ensure_ascii=False,
+        )
+        for t in timings
+    )
+    return "\n".join(lines) + "\n"

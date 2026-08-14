@@ -73,3 +73,68 @@ def test_parse_line_markers_never_appear_in_text():
     chunks = parse_line("**rates** ~ ##5.25## **gold** tail.")
     for c in chunks:
         assert "*" not in c.text and "#" not in c.text and "~" not in c.text
+
+
+from vibe.narrate import WordTiming, build_word_timings, timing_jsonl
+
+
+def test_build_word_timings_plain_base():
+    chunks = [Chunk("hello world", "base", 0, 0)]
+    events = [[WordTiming("hello", 0.0, 0.2), WordTiming("world", 0.2, 0.4)]]
+    ts = build_word_timings(chunks, events)
+    assert ts == [
+        WordTiming("hello", 0.0, 0.2),
+        WordTiming("world", 0.2, 0.4),
+    ]
+
+
+def test_build_word_timings_keyword_pre_silence_offsets():
+    chunks = [
+        Chunk("A", "base", 0, 0),
+        Chunk("rates", "keyword", 120, 0),
+    ]
+    events = [
+        [WordTiming("A", 0.0, 0.2)],
+        [WordTiming("rates", 0.0, 0.3)],
+    ]
+    ts = build_word_timings(chunks, events)
+    assert ts[0] == WordTiming("A", 0.0, 0.2)
+    assert ts[1] == WordTiming("rates", 0.32, 0.62)
+
+
+def test_build_word_timings_figure_post_silence_gap():
+    chunks = [
+        Chunk("Up", "base", 0, 0),
+        Chunk("5.25", "figure", 0, 450),
+        Chunk("now", "base", 0, 0),
+    ]
+    events = [
+        [WordTiming("Up", 0.0, 0.2)],
+        [WordTiming("5.25", 0.0, 0.3)],
+        [WordTiming("now", 0.0, 0.2)],
+    ]
+    ts = build_word_timings(chunks, events)
+    # base 0.0-0.2; figure 0.2-0.5 then 450ms post -> next starts at 0.95; now 0.95-1.15
+    assert ts[0] == WordTiming("Up", 0.0, 0.2)
+    assert ts[1] == WordTiming("5.25", 0.2, 0.5)
+    assert ts[2] == WordTiming("now", 0.95, 1.15)
+
+
+def test_build_word_timings_pause_chunk_advances_cursor():
+    chunks = [
+        Chunk("Money", "base", 0, 0),
+        Chunk("", "pause", 300, 0),
+        Chunk("fast", "base", 0, 0),
+    ]
+    events = [
+        [WordTiming("Money", 0.0, 0.2)],
+        [],
+        [WordTiming("fast", 0.0, 0.2)],
+    ]
+    ts = build_word_timings(chunks, events)
+    assert ts[1] == WordTiming("fast", 0.5, 0.7)
+
+
+def test_timing_jsonl_matches_check_contract():
+    out = timing_jsonl([WordTiming("rates", 0.0, 0.2), WordTiming("now", 0.2, 0.4)])
+    assert out == '{"word": "rates", "start_s": 0.0, "end_s": 0.2}\n{"word": "now", "start_s": 0.2, "end_s": 0.4}\n'
