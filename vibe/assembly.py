@@ -12,19 +12,17 @@ never a human gate beyond the segment-1 preview.
 from __future__ import annotations
 
 import io
+import json
 import os
 import subprocess
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
-from . import config, render
-
-# Imports grow per-task: Task 4 adds `io` + `typing`/`config`/`render`; Task 5 adds
-# `os`/`subprocess`/`tempfile`; Task 6 adds `json` + `Callable`/`ThreadPoolExecutor`
-# + `check`/`layout`/`narrate`/`script`. Each task's commit leaves every import used.
+from . import check, config, layout, narrate, render, script
 
 # The rework gate shows the takes for rework_base_rate(0..REWORK_MAX_INDEX) before
 # declining: 0%, -6%, -12%, -18% (4 takes), i.e. the cap is this high index.
@@ -201,3 +199,201 @@ def ffmpeg_concatener() -> Concatener:
                 os.remove(list_path)
 
     return _concat
+
+
+@dataclass(frozen=True)
+class AssembleResult:
+    step: str
+    index: int | None
+    ok: bool
+    message: str
+
+
+def _render_segment_from_disk(
+    lay: layout.Layout, n: int, rec: dict[str, object],
+    hero: bytes, footline: str | None, *, renderer: render.ImageRenderer, enc: render.Encoder,
+) -> AssembleResult:
+    """Render one missing segment N from its on-disk narration; skip if it exists."""
+    mp4 = lay.segments / f"segment-{n}.mp4"
+    if mp4.is_file():
+        return AssembleResult("segment", n, True, f"segment-{n}.mp4: skipped (exists)")
+    try:
+        text = (lay.scripts / str(rec["file"])).read_text(encoding="utf-8")
+        timing = render.read_timing(lay.narration / f"segment-{n}.timing.jsonl")
+        mp3 = (lay.narration / f"segment-{n}.mp3").read_bytes()
+        clip = render.render_segment(text, timing, mp3, footline, hero,
+                                     renderer=renderer, encoder=enc)
+    except (render.RenderError, OSError, ValueError, KeyError) as exc:
+        return AssembleResult("segment", n, False, f"segment-{n}.mp4: error: {exc}")
+    render._write_atomic(mp4, clip)
+    return AssembleResult("segment", n, True, f"segment-{n}.mp4: OK")
+
+
+def _synthesize_and_render(
+    lay: layout.Layout, n: int, rec: dict[str, object],
+    hero: bytes, footline: str | None, *, base_rate: str,
+    synth: narrate.Synthesizer, nar_enc: narrate.Encoder,
+    renderer: render.ImageRenderer, enc: render.Encoder,
+) -> AssembleResult:
+    """Re-synthesize + re-render ONLY segment N at `base_rate` (the rework loop)."""
+    try:
+        text = (lay.scripts / str(rec["file"])).read_text(encoding="utf-8")
+        seg = narrate.narrate_segment(text, synthesizer=synth, encoder=nar_enc,
+                                      base_rate=base_rate)
+    except (narrate.NarrationError, OSError, ValueError, KeyError) as exc:
+        return AssembleResult("rework", n, False, f"segment-{n}.mp4: narration error: {exc}")
+    render._write_atomic(lay.narration / f"segment-{n}.mp3", seg.mp3_bytes)
+    render._write_atomic(lay.narration / f"segment-{n}.timing.jsonl",
+                         narrate.timing_jsonl(seg.timings).encode("utf-8"))
+    try:
+        clip = render.render_segment(text, seg.timings, seg.mp3_bytes, footline, hero,
+                                     renderer=renderer, encoder=enc)
+    except (render.RenderError, OSError, ValueError, KeyError) as exc:
+        return AssembleResult("rework", n, False, f"segment-{n}.mp4: render error: {exc}")
+    render._write_atomic(lay.segments / f"segment-{n}.mp4", clip)
+    return AssembleResult("rework", n, True, f"segment-{n}.mp4: OK (rate {base_rate})")
+
+
+def _preview_gate(
+    lay: layout.Layout, rec1: dict[str, object], hero: bytes, footline: str | None,
+    *, approve: Callable[[], bool],
+    synth: narrate.Synthesizer, nar_enc: narrate.Encoder,
+    renderer: render.ImageRenderer, enc: render.Encoder,
+) -> list[AssembleResult]:
+    """Segment-1 preview gate + self-guided rework loop. Only segment 1 is touched."""
+    results: list[AssembleResult] = []
+    attempt = 0
+    while True:
+        base_rate = rework_base_rate(attempt)
+        if attempt == 0:
+            res = _render_segment_from_disk(lay, 1, rec1, hero, footline,
+                                            renderer=renderer, enc=enc)
+        else:
+            res = _synthesize_and_render(lay, 1, rec1, hero, footline, base_rate=base_rate,
+                                         synth=synth, nar_enc=nar_enc, renderer=renderer, enc=enc)
+        results.append(res)
+        if not res.ok:
+            return results
+        approved = approve()
+        results.append(AssembleResult(
+            "gate", 1, approved,
+            "segment-1 preview: approved" if approved else "segment-1 preview: rejected"))
+        if approved:
+            return results
+        if attempt >= REWORK_MAX_INDEX:
+            results.append(AssembleResult(
+                "gate", 1, False,
+                "needs-human: segment 1 rejected after rework cap (max 4 takes)"))
+            return results
+        attempt += 1
+
+
+def _fan_out(
+    lay: layout.Layout, records: list[object], hero: bytes, footline: str | None,
+    *, renderer: render.ImageRenderer, enc: render.Encoder,
+) -> list[AssembleResult]:
+    """Render any missing segments 2..N in parallel (skip-existing -> idempotent)."""
+    n_total = len(records)
+
+    def _one(n: int) -> AssembleResult:
+        rec = cast(dict[str, object], records[n - 1])
+        return _render_segment_from_disk(lay, n, rec, hero, footline,
+                                         renderer=renderer, enc=enc)
+
+    with ThreadPoolExecutor() as pool:
+        return list(pool.map(_one, _fanout(n_total)))
+
+
+def _final_check(
+    lay: layout.Layout, records: list[object], *, verify_video: bool,
+) -> list[AssembleResult]:
+    """Deterministic final check (never a human gate): contract + duration."""
+    if not verify_video:
+        return [AssembleResult("check", None, True, "full.mp4: check skipped (fake seams)")]
+    clips = [lay.segments / f"segment-{i}.mp4" for i in range(1, len(records) + 1)]
+    clips.append(lay.recap_video)
+    durations: list[float] = []
+    for clip in clips:
+        probe = check.probe_media(clip)
+        if probe.container_duration is None:
+            return [AssembleResult("check", None, False,
+                                   f"full.mp4: check failed: no duration for {clip.name}")]
+        durations.append(probe.container_duration)
+    expected = expected_full_duration(durations, recap_s=config.RECAP_SECONDS)
+    try:
+        res = check.check_video(lay.full_video, kind="full")
+    except check.MediaNotFound as exc:
+        return [AssembleResult("check", None, False, f"full.mp4: check failed: {exc}")]
+    if not res.ok:
+        return [AssembleResult("check", None, False,
+                               f"full.mp4: check failed: {'; '.join(res.failures)}")]
+    actual = check.probe_media(lay.full_video).container_duration
+    tol = config.DURATION_TOLERANCE_S
+    if actual is not None and abs(actual - expected) > tol:
+        return [AssembleResult("check", None, False,
+                               f"full.mp4: check failed: duration {actual:.2f}s != expected {expected:.2f}s")]
+    return [AssembleResult("check", None, True,
+                           f"full.mp4: OK (full) {actual:.2f}s (expected {expected:.2f}s)")]
+
+
+def assemble_approved(
+    lay: layout.Layout,
+    *,
+    synth: narrate.Synthesizer,
+    nar_enc: narrate.Encoder,
+    renderer: render.ImageRenderer,
+    enc: render.Encoder,
+    recap_enc: RecapEncoder,
+    concatener: Concatener,
+    font: object | None = None,
+    approve: Callable[[], bool] | None = None,
+    verify_video: bool = True,
+) -> list[AssembleResult]:
+    """The T6 assembly flow: gate -> fan-out -> recap -> concat -> deterministic check."""
+    approve = approve or (lambda: True)
+    results: list[AssembleResult] = []
+    brief = json.loads(lay.topic_brief.read_text(encoding="utf-8"))
+    footline = render._footline(brief)
+    idx = script.read_index(lay)
+    records = cast(list[object], idx["scripts"])
+
+    if not lay.hero.is_file():
+        render._write_atomic(lay.hero, render.make_hero(brief, font=font))
+    hero = lay.hero.read_bytes()
+    if not lay.recap_png.is_file():
+        render._write_atomic(lay.recap_png, make_recap(brief, font=font))
+
+    rec1 = cast(dict[str, object], records[0])
+    results += _preview_gate(lay, rec1, hero, footline, approve=approve,
+                             synth=synth, nar_enc=nar_enc, renderer=renderer, enc=enc)
+    if not results[-1].ok:  # gate ended on a decline (needs-human) or a render failure
+        return results
+
+    fanout = _fan_out(lay, records, hero, footline, renderer=renderer, enc=enc)
+    results += fanout
+    if any(not r.ok for r in fanout):  # a fan-out segment failed -> no concat, no partial full.mp4
+        return results
+
+    try:
+        recap_clip = recap_enc(
+            lay.recap_png.read_bytes(), width=config.FULL_WIDTH,
+            height=config.FULL_HEIGHT, fps=config.FPS, seconds=config.RECAP_SECONDS,
+        )
+    except AssemblyError as exc:
+        results.append(AssembleResult("recap", None, False, f"recap.mp4: error: {exc}"))
+        return results
+    render._write_atomic(lay.recap_video, recap_clip)
+    results.append(AssembleResult("recap", None, True,
+                                  f"{lay.recap_video.name}: OK ({config.RECAP_LABEL})"))
+
+    clips = [lay.segments / f"segment-{i}.mp4" for i in range(1, len(records) + 1)]
+    clips.append(lay.recap_video)
+    try:
+        concatener(clips, lay.full_video, list_text=concat_list(clips))
+    except AssemblyError as exc:
+        results.append(AssembleResult("concat", None, False, f"full.mp4: error: {exc}"))
+        return results
+    results.append(AssembleResult("concat", None, True, "full.mp4: OK"))
+
+    results += _final_check(lay, records, verify_video=verify_video)
+    return results

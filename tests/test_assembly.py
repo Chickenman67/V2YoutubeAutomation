@@ -176,3 +176,84 @@ def test_ffmpeg_concatener_real_concat(ffmpeg, tmp_path):
     assembly.ffmpeg_concatener()(clips, out, list_text=assembly.concat_list(clips))
     res = check.check_video(out, kind="full")
     assert res.ok, res.failures
+
+
+import json
+
+from vibe import script
+
+
+def _write_fixture_build(tmp_path) -> layout.Layout:
+    lay = layout.create_layout(tmp_path)
+    brief = {"topic_brief": {
+        "title": "Rates Are Up",
+        "segments": [{"title": "A"}, {"title": "B"}],
+        "sources": [{"publisher": "CNBC"}],
+    }}
+    (lay.topic_brief).write_text(json.dumps(brief), encoding="utf-8")
+    (lay.hero).write_bytes(b"hero")
+    (lay.recap_png).write_bytes(b"recap-png")
+    idx = {"video": "Rates Are Up", "scripts": [
+        {"index": 1, "file": "segment-1.txt", "word_count": 2,
+         "status": script.STATUS_APPROVED, "attempts": 1, "violations": []},
+        {"index": 2, "file": "segment-2.txt", "word_count": 2,
+         "status": script.STATUS_APPROVED, "attempts": 1, "violations": []},
+    ]}
+    (lay.scripts / "index.json").write_text(json.dumps(idx), encoding="utf-8")
+    for n in (1, 2):
+        (lay.scripts / f"segment-{n}.txt").write_text("hello world", encoding="utf-8")
+        (lay.narration / f"segment-{n}.mp3").write_bytes(b"mp3")
+        (lay.narration / f"segment-{n}.timing.jsonl").write_text(
+            '{"word": "hello", "start_s": 0.0, "end_s": 0.2}\n'
+            '{"word": "world", "start_s": 0.2, "end_s": 0.5}\n',
+            encoding="utf-8")
+    return lay
+
+
+def _seams():
+    from vibe import assembly, narrate, render
+    return {
+        "synth": narrate.fake_synthesizer(),
+        "nar_enc": narrate.fake_encoder(),
+        "renderer": render.fake_renderer(),
+        "enc": render.fake_encoder(),
+        "recap_enc": assembly.fake_recap_encoder(),
+        "concatener": assembly.fake_concatener(),
+    }
+
+
+def test_assemble_fake_end_to_end_approve(tmp_path):
+    from vibe import assembly
+
+    lay = _write_fixture_build(tmp_path)
+    calls = iter([False, True])
+    results = assembly.assemble_approved(
+        lay, **_seams(), verify_video=False, approve=lambda: next(calls))
+    assert any(r.ok and r.step == "rework" and r.index == 1 for r in results)
+    assert (lay.segments / "segment-1.mp4").is_file()
+    assert (lay.segments / "segment-2.mp4").is_file()
+    assert (lay.recap_video).is_file()
+    assert (lay.full_video).is_file()
+    assert (lay.full_video).read_bytes() == b"full.mp4"
+
+
+def test_assemble_fake_skip_existing_and_no_rework(tmp_path):
+    from vibe import assembly
+
+    lay = _write_fixture_build(tmp_path)
+    (lay.segments / "segment-2.mp4").write_bytes(b"existing")
+    results = assembly.assemble_approved(lay, **_seams(), verify_video=False, approve=lambda: True)
+    assert not any(r.step == "rework" for r in results)
+    assert any("segment-2.mp4: skipped (exists)" in r.message for r in results)
+    assert (lay.segments / "segment-2.mp4").read_bytes() == b"existing"
+    assert (lay.full_video).is_file()
+
+
+def test_assemble_fake_reject_past_cap_declines(tmp_path):
+    from vibe import assembly
+
+    lay = _write_fixture_build(tmp_path)
+    results = assembly.assemble_approved(lay, **_seams(), verify_video=False, approve=lambda: False)
+    assert any(r.message.startswith("needs-human") for r in results)
+    assert not (lay.full_video).exists()
+    assert not (lay.segments / "segment-2.mp4").exists()
