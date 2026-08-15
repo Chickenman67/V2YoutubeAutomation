@@ -14,7 +14,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__, check, discover, layout, narrate, render, script
+from . import __version__, assembly, check, discover, layout, narrate, render, script
 
 USAGE = "a video needs a thesis"
 
@@ -35,6 +35,22 @@ def _select_renderer() -> tuple[render.ImageRenderer, render.Encoder]:
     if os.environ.get("VIBE_RENDERER") == "fake":
         return render.fake_renderer(), render.fake_encoder()
     return render.pillow_renderer(), render.ffmpeg_encoder()
+
+
+def _select_assembler() -> tuple[assembly.RecapEncoder, assembly.Concatener]:
+    if os.environ.get("VIBE_ASSEMBLER") == "fake":
+        return assembly.fake_recap_encoder(), assembly.fake_concatener()
+    return assembly.ffmpeg_recap_encoder(), assembly.ffmpeg_concatener()
+
+
+def _gate_prompt() -> bool:
+    if sys.stdin is None or not sys.stdin.isatty():
+        return True  # non-tty (CI/offline): auto-approve segment 1
+    try:
+        answer = input("Approve segment 1? [y/N] ").strip().lower()
+    except EOFError:
+        return False
+    return answer in ("y", "yes")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -78,6 +94,11 @@ def _build_parser() -> argparse.ArgumentParser:
     rend.add_argument("--build", type=Path, default=Path("build"), metavar="DIR",
                       help="build root with scripts/index.json (default: ./build)")
     rend.set_defaults(_handler=_cmd_render)
+
+    asm = sub.add_parser("assemble", help="assemble the full video (preview -> fan-out -> concat)")
+    asm.add_argument("--build", type=Path, default=Path("build"), metavar="DIR",
+                     help="build root with scripts/index.json (default: ./build)")
+    asm.set_defaults(_handler=_cmd_assemble)
     return parser
 
 
@@ -160,6 +181,28 @@ def _cmd_render(args: argparse.Namespace) -> int:
     for res in results:
         print(res.message, file=sys.stderr if not res.ok else sys.stdout)
         failed = failed or (not res.ok and res.status == script.STATUS_APPROVED)
+    return 1 if failed else 0
+
+
+def _cmd_assemble(args: argparse.Namespace) -> int:
+    lay = layout.Layout(root=args.build)
+    if not (lay.scripts / "index.json").is_file():
+        print(f"vibe assemble: no {lay.scripts.joinpath('index.json').as_posix()}; "
+              f"run `vibe make` first", file=sys.stderr)
+        return 2
+    synth, nar_enc = _select_narrator()
+    renderer, enc = _select_renderer()
+    recap_enc, concatener = _select_assembler()
+    verify = os.environ.get("VIBE_ASSEMBLER") != "fake"
+    results = assembly.assemble_approved(
+        lay, synth=synth, nar_enc=nar_enc, renderer=renderer, enc=enc,
+        recap_enc=recap_enc, concatener=concatener, approve=_gate_prompt,
+        verify_video=verify,
+    )
+    failed = False
+    for res in results:
+        print(res.message, file=sys.stderr if not res.ok else sys.stdout)
+        failed = failed or (not res.ok or res.message.startswith("needs-human"))
     return 1 if failed else 0
 
 
