@@ -199,10 +199,9 @@ def _cmd_assemble(args: argparse.Namespace) -> int:
         recap_enc=recap_enc, concatener=concatener, approve=_gate_prompt,
         verify_video=verify,
     )
-    failed = False
+    failed = not results or not results[-1].ok
     for res in results:
         print(res.message, file=sys.stderr if not res.ok else sys.stdout)
-        failed = failed or (not res.ok or res.message.startswith("needs-human"))
     return 1 if failed else 0
 
 

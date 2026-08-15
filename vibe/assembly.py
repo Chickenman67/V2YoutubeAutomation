@@ -43,7 +43,7 @@ class NarrateKnob:
 def rework_base_rate(attempt: int) -> str:
     """Deterministic pacing step per rejection iteration, pre-signed for edge-tts."""
     table = ("+0%", "-6%", "-12%", "-18%")
-    return table[min(attempt, 3)]
+    return table[min(attempt, REWORK_MAX_INDEX)]
 
 
 def concat_list(clips: Sequence[Path]) -> str:
@@ -189,6 +189,8 @@ def ffmpeg_concatener() -> Concatener:
                 raise AssemblyError(f"ffmpeg concat failed: {detail}")
             os.replace(tmp, out)
         except AssemblyError:
+            if tmp.exists():
+                tmp.unlink()
             raise
         except Exception:
             if tmp.exists():
@@ -328,7 +330,10 @@ def _final_check(
                                f"full.mp4: check failed: {'; '.join(res.failures)}")]
     actual = check.probe_media(lay.full_video).container_duration
     tol = config.DURATION_TOLERANCE_S
-    if actual is not None and abs(actual - expected) > tol:
+    if actual is None:
+        return [AssembleResult("check", None, False,
+                               "full.mp4: check failed: no duration for full.mp4")]
+    if abs(actual - expected) > tol:
         return [AssembleResult("check", None, False,
                                f"full.mp4: check failed: duration {actual:.2f}s != expected {expected:.2f}s")]
     return [AssembleResult("check", None, True,
