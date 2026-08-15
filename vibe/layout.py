@@ -61,6 +61,14 @@ class Layout:
     def full_video(self) -> Path:
         return self.root / "full.mp4"
 
+    @property
+    def recap_png(self) -> Path:
+        return self.root / "recap.png"
+
+    @property
+    def recap_video(self) -> Path:
+        return self.root / "recap.mp4"
+
 
 def create_layout(root: Path) -> Layout:
     """Create the build layout and write a deterministic manifest. Idempotent."""

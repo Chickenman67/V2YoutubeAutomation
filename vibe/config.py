@@ -70,6 +70,12 @@ ZOOM_SECONDS = 0.8
 CAPTION_SIZE = 48
 FOOTLINE_SIZE = 24
 
+# Assembly (docs/specs/assembly.md §5-§6): the silent recap clip tail length and its
+# human label. RECAP_SECONDS is the full-video tail; the recap is the only re-encoded
+# concat input. Single source of truth for the final-check recap figure.
+RECAP_SECONDS = 3.0
+RECAP_LABEL = "recap"
+
 
 def contract_dict() -> dict[str, object]:
     """The media contract as a JSON-serialisable dict (recorded in the manifest)."""
