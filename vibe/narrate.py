@@ -269,11 +269,27 @@ class SegmentResult:
     message: str
 
 
+def combine_rate(base_rate: str, knob_rate: str) -> str:
+    """Deterministically apply a base speaking-rate offset to a per-kind prosody knob.
+
+    Both are percentages with an optional sign; the result is the signed sum (so edge-tts
+    accepts it). The default base `0%` maps to the knob's own value, keeping T4/T5 output
+    byte-identical when the knob is unused.
+    """
+
+    def _pct(value: str) -> int:
+        v = value.strip().rstrip("%").strip()
+        return int(v[1:]) if v.startswith("+") else int(v)
+
+    return f"{_pct(base_rate) + _pct(knob_rate):+d}%"
+
+
 def narrate_segment(
     script_text: str,
     *,
     synthesizer: Synthesizer,
     encoder: Encoder,
+    base_rate: str = "0%",
 ) -> SegmentNarration:
     """Synthesize one segment's script into audio bytes + cumulative word timing."""
     units: list[tuple[bytes, int, int]] = []
@@ -288,9 +304,10 @@ def narrate_segment(
                 units.append((b"", chunk.pre_silence_ms, chunk.post_silence_ms))
                 chunk_events.append([])
                 continue
-            rate, volume = KNOBS[chunk.kind]
+            knob_rate, volume = KNOBS[chunk.kind]
             audio, words = synthesizer(
-                chunk.text, voice=config.NARRATION_VOICE, rate=rate, volume=volume
+                chunk.text, voice=config.NARRATION_VOICE,
+                rate=combine_rate(base_rate, knob_rate), volume=volume,
             )
             units.append((audio, chunk.pre_silence_ms, chunk.post_silence_ms))
             chunk_events.append(words)
