@@ -311,7 +311,6 @@ def _final_check(
     if not verify_video:
         return [AssembleResult("check", None, True, "full.mp4: check skipped (fake seams)")]
     clips = [lay.segments / f"segment-{i}.mp4" for i in range(1, len(records) + 1)]
-    clips.append(lay.recap_video)
     durations: list[float] = []
     for clip in clips:
         probe = check.probe_media(clip)
