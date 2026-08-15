@@ -109,6 +109,8 @@ These bind the Remotion renderer (owned by #5's template) because assembly consu
 
 The full-video run is deterministic and cheap (copy-concat); re-runs after a segment fix only re-concat.
 
+> **T6 implementation note (2026-08):** the full-video assembly is driven by **`vibe assemble`** (`vibe/assembly.py`): a segment-1 preview gate with a self-guided rework loop (re-synthesize segment 1 at auto-tuned narration base rates until approved or declined past the cap), then a `ThreadPoolExecutor` fan-out over segments 2..N (skip-existing → idempotent), a silent-AAC recap clip (`recap.mp4`, keeps one A+V stream for the copy-concat), a `-f concat -safe 0 -c copy +faststart` concat of `[seg1…segN, recap]` into `full.mp4`, and a deterministic final check (`check_video(full.mp4, kind="full")` + container duration ≈ `expected_full_duration(Σ clip durations, recap_s=RECAP_SECONDS)`).
+
 ## 7. Shorts assembly
 
 Per segment:
