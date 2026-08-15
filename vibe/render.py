@@ -10,10 +10,16 @@ rendered; they only style captions.
 from __future__ import annotations
 
 import io
+import json
+import os
+import subprocess
+import tempfile
 from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, NamedTuple, Protocol, cast
 
-from . import config
+from . import config, layout, script
 from .narrate import ChunkKind, WordTiming, parse_line
 
 
@@ -312,3 +318,181 @@ def make_hero(brief: dict[str, object], *, font: object | None = None) -> bytes:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+class RenderError(RuntimeError):
+    """Raised when the real ffmpeg encode fails."""
+
+
+def ffmpeg_encoder() -> Encoder:
+    """Real encoder: raw rgb24 frames + narration mp3 -> deterministic .mp4."""
+
+    def _enc(
+        frames: tuple[bytes, ...],
+        *,
+        width: int,
+        height: int,
+        fps: int,
+        audio: bytes,
+    ) -> bytes:
+        raw_path: str | None = None
+        audio_path: str | None = None
+        mp4_path: str | None = None
+        proc = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".raw", delete=False) as rf:
+                raw_path = rf.name
+                for frame in frames:
+                    rf.write(frame)
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as af:
+                audio_path = af.name
+                af.write(audio)
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as mf:
+                mp4_path = mf.name
+            cmd = [
+                "ffmpeg", "-y", "-v", "error",
+                "-f", "rawvideo", "-pix_fmt", "rgb24",
+                "-s", f"{width}x{height}", "-r", str(fps), "-i", raw_path,
+                "-i", audio_path,
+                *config.VIDEO_ENCODE_FLAGS,
+                *config.AUDIO_ENCODE_FLAGS,
+                "-shortest",
+                *config.MUX_FLAGS,
+                mp4_path,
+            ]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, check=False)
+            except OSError as exc:
+                raise RenderError(f"ffmpeg not found: {exc}") from exc
+            if proc is None or proc.returncode != 0:
+                detail = repr(proc.stderr) if proc is not None else "not run"
+                raise RenderError(f"ffmpeg encode failed: {detail}")
+            with open(mp4_path, "rb") as mh:
+                return mh.read()
+        finally:
+            if raw_path is not None:
+                os.remove(raw_path)
+            if audio_path is not None:
+                os.remove(audio_path)
+            if mp4_path is not None:
+                os.remove(mp4_path)
+
+    return _enc
+
+
+def _spoken_tokens(line: str) -> int:
+    return sum(
+        len(chunk.text.split())
+        for chunk in parse_line(line)
+        if chunk.kind != "pause" and chunk.text.strip()
+    )
+
+
+def _caption_lines(script_text: str, timing: Sequence[WordTiming]) -> list[CaptionLine]:
+    out: list[CaptionLine] = []
+    cursor = 0
+    for line in script_text.splitlines():
+        if not line.strip():
+            continue
+        expected = _spoken_tokens(line)
+        line_timings = timing[cursor : cursor + expected]
+        cursor += expected
+        cap = parse_caption_line(line, line_timings)
+        if cap is not None:
+            out.append(cap)
+    return out
+
+
+def read_timing(path: Path) -> list[WordTiming]:
+    words: list[WordTiming] = []
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            words.append(WordTiming(str(obj["word"]), float(obj["start_s"]), float(obj["end_s"])))
+    return words
+
+
+def render_segment(
+    script_text: str,
+    timing: Sequence[WordTiming],
+    mp3: bytes,
+    footline: str | None,
+    hero: bytes,
+    *,
+    renderer: ImageRenderer,
+    encoder: Encoder,
+    fps: int = config.FPS,
+    width: int = config.FULL_WIDTH,
+    height: int = config.FULL_HEIGHT,
+) -> bytes:
+    """Render one approved segment's script + narration into a self-contained clip."""
+    lines = _caption_lines(script_text, timing)
+    specs = plan_frames(lines, fps=fps, width=width, height=height, footline=footline)
+    frames = renderer(specs, hero, palette=config.PALETTE)
+    return encoder(frames, width=width, height=height, fps=fps, audio=mp3)
+
+
+@dataclass(frozen=True)
+class SegmentRenderResult:
+    index: int
+    status: str
+    ok: bool
+    message: str
+
+
+def _write_atomic(path: Path, payload: bytes) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_bytes(payload)
+    os.replace(tmp, path)
+
+
+def _footline(brief: dict[str, object]) -> str | None:
+    tb = cast(dict[str, object], brief["topic_brief"])
+    sources = cast(list[object], tb.get("sources", []))
+    for row in sources:
+        source = cast(dict[str, object], row)
+        pub = source.get("publisher")
+        if pub:
+            return f"Source: {pub}"
+    return None
+
+
+def render_approved(
+    lay: layout.Layout,
+    *,
+    renderer: ImageRenderer,
+    encoder: Encoder,
+    font: object | None = None,
+) -> list[SegmentRenderResult]:
+    """Render every `approved` segment; skip others; write `segment-<n>.mp4`."""
+    brief = json.loads(lay.topic_brief.read_text(encoding="utf-8"))
+    footline = _footline(brief)
+    if not lay.hero.is_file():
+        _write_atomic(lay.hero, make_hero(brief, font=font))
+    hero = lay.hero.read_bytes()
+    idx = script.read_index(lay)
+    rows = cast(list[object], idx["scripts"])
+    results: list[SegmentRenderResult] = []
+    for row in rows:
+        rec = cast(dict[str, object], row)
+        n = int(cast(Any, rec["index"]))
+        status = str(rec["status"])
+        mp4 = lay.segments / f"segment-{n}.mp4"
+        if status != script.STATUS_APPROVED:
+            results.append(SegmentRenderResult(n, status, False, f"segment-{n}.mp4: skipped ({status})"))
+            continue
+        try:
+            text = (lay.scripts / str(rec["file"])).read_text(encoding="utf-8")
+            timing = read_timing(lay.narration / f"segment-{n}.timing.jsonl")
+            mp3 = (lay.narration / f"segment-{n}.mp3").read_bytes()
+            clip = render_segment(text, timing, mp3, footline, hero,
+                                  renderer=renderer, encoder=encoder)
+        except (RenderError, OSError, ValueError, KeyError) as exc:
+            results.append(SegmentRenderResult(n, status, False, f"segment-{n}.mp4: error: {exc}"))
+            continue
+        _write_atomic(mp4, clip)
+        results.append(SegmentRenderResult(n, status, True, f"segment-{n}.mp4: OK"))
+    return results

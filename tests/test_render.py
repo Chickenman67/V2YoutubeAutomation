@@ -1,13 +1,16 @@
 """Render stage (T5): layout/hero, caption parsing, zoom easing, planner, seams,
-orchestrators, and the CLI seam. Pure-core tests run offline; real-image and real-encode
-tests are gated on Pillow/ffmpeg availability.
+PIL renderer/hero, orchestrators, and the CLI seam. Pure-core tests run offline;
+real-image and real-encode tests are gated on Pillow/ffmpeg availability.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from vibe import config, layout
+import pytest
+
+from vibe import config, layout, script
 from vibe.narrate import WordTiming
 from vibe.render import (
     Caption,
@@ -20,6 +23,18 @@ from vibe.render import (
     plan_frames,
     zoom_scale,
 )
+
+
+def _cl(spans, start, end, has_figure=False):
+    return CaptionLine(tuple(spans), start, end, has_figure)
+
+
+def _w(surface, kind, s, e):
+    return CaptionWord(surface, kind, s, e)
+
+
+def _words(items):
+    return [(w.surface, w.kind) for w in items]
 
 
 def test_layout_exposes_hero_still(tmp_path: Path):
@@ -39,10 +54,6 @@ def test_render_config_constants():
     assert config.PALETTE["positive"] == "#1F9D82"
     assert config.PALETTE["risk"] == "#E4572E"
     assert config.PALETTE["gold"] == "#D4AF37"
-
-
-def _words(items):
-    return [(w.surface, w.kind) for w in items]
 
 
 def test_zoom_scale_open_and_hold():
@@ -106,14 +117,6 @@ def test_parse_caption_line_pause_adds_gap_not_word():
     assert cap.start_s == 0.0 and cap.end_s == 0.7
 
 
-def _cl(spans, start, end, has_figure=False):
-    return CaptionLine(tuple(spans), start, end, has_figure)
-
-
-def _w(surface, kind, s, e):
-    return CaptionWord(surface, kind, s, e)
-
-
 def test_active_captions_window_and_hold():
     l1 = _cl((_w("a", "base", 0.0, 0.2), _w("b", "base", 0.2, 0.5)), 0.0, 0.5)
     l2 = _cl((_w("c", "base", 0.8, 1.0),), 0.8, 1.0)
@@ -160,20 +163,6 @@ def test_plan_frames_figure_captured_with_footline():
     assert isinstance(cap, Caption)
     assert cap.figure == StyledSpan("5.25", "figure")
     assert cap.footline == "Source: Yahoo Finance"
-
-
-def test_plan_frames_figure_words_in_caption_window():
-    lf = _cl(
-        (_w("5.25", "figure", 0.2, 0.4),),
-        0.2, 0.4, has_figure=True,
-    )
-    spec = plan_frames([lf], fps=30, width=1920, height=1080)
-    body = [f for f in spec if f.caption is not None]
-    # the figure word rides inside the caption's window (word timing == force-visible)
-    assert body[0].caption.figure == StyledSpan("5.25", "figure")
-
-
-import pytest
 
 
 def test_resolve_font_default_returns_font():
@@ -223,3 +212,94 @@ def test_pillow_renderer_produces_rgb_frames():
     frames = r(spec, hero=b"", palette=config.PALETTE)
     assert frames
     assert all(len(f) == 64 * 64 * 3 for f in frames)
+
+
+def test_render_segment_with_fakes():
+    from vibe.render import fake_encoder, fake_renderer, render_segment
+
+    timing = [WordTiming("a", 0.0, 0.2), WordTiming("b", 0.2, 0.5)]
+    out = render_segment(
+        "**a** b", timing, b"mp3", None, b"hero",
+        renderer=fake_renderer(), encoder=fake_encoder(),
+    )
+    assert out == b"fake-mp4"
+
+
+def _index(*rows):
+    return {"video": "v", "scripts": [dict(r) for r in rows]}
+
+
+def _timing_text():
+    return '{"word": "hello", "start_s": 0.0, "end_s": 0.2}\n{"word": "world", "start_s": 0.2, "end_s": 0.5}\n'
+
+
+def test_render_approved_writes_and_skips(tmp_path):
+    from vibe.render import fake_encoder, fake_renderer, render_approved
+
+    lay = layout.create_layout(tmp_path)
+    (lay.topic_brief).write_text(json.dumps(
+        {"topic_brief": {"title": "t", "segments": [], "sources": [{"publisher": "CNBC"}]}}),
+        encoding="utf-8")
+    (lay.hero).write_bytes(b"hero")
+    (lay.scripts / "index.json").write_text(
+        json.dumps(_index(
+            {"index": 1, "file": "segment-1.txt", "word_count": 2,
+             "status": script.STATUS_APPROVED, "attempts": 1, "violations": []},
+            {"index": 2, "file": "segment-2.txt", "word_count": 0,
+             "status": script.STATUS_NEEDS_HUMAN, "attempts": 3, "violations": []},
+        )), encoding="utf-8")
+    (lay.scripts / "segment-1.txt").write_text("hello world", encoding="utf-8")
+    (lay.scripts / "segment-2.txt").write_text("bad", encoding="utf-8")
+    (lay.narration / "segment-1.mp3").write_bytes(b"mp3")
+    (lay.narration / "segment-1.timing.jsonl").write_text(_timing_text(), encoding="utf-8")
+
+    results = render_approved(lay, renderer=fake_renderer(), encoder=fake_encoder())
+    assert results[0].ok and "OK" in results[0].message
+    assert (lay.segments / "segment-1.mp4").read_bytes() == b"fake-mp4"
+    assert results[1].ok is False and "skipped" in results[1].message
+    assert not (lay.segments / "segment-2.mp4").exists()
+
+
+def test_render_approved_missing_narration_no_partial(tmp_path):
+    from vibe.render import fake_encoder, fake_renderer, render_approved
+
+    lay = layout.create_layout(tmp_path)
+    (lay.topic_brief).write_text(json.dumps(
+        {"topic_brief": {"title": "t", "segments": [], "sources": [{"publisher": "CNBC"}]}}),
+        encoding="utf-8")
+    (lay.hero).write_bytes(b"hero")
+    (lay.scripts / "index.json").write_text(
+        json.dumps(_index(
+            {"index": 1, "file": "segment-1.txt", "word_count": 2,
+             "status": script.STATUS_APPROVED, "attempts": 1, "violations": []},
+        )), encoding="utf-8")
+    (lay.scripts / "segment-1.txt").write_text("hello world", encoding="utf-8")
+
+    results = render_approved(lay, renderer=fake_renderer(), encoder=fake_encoder())
+    assert results[0].ok is False
+    assert not (lay.segments / "segment-1.mp4").exists()
+
+def test_ffmpeg_encoder_real_clip_matches_contract(ffmpeg_available, tmp_path):
+    import subprocess
+
+    if not ffmpeg_available:
+        pytest.skip("ffmpeg/ffprobe not on PATH")
+    from vibe import check
+    from vibe.render import ffmpeg_encoder, pillow_renderer, render_segment
+
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+         "-i", "anullsrc=r=44100:cl=mono", "-t", "0.1",
+         "-c:a", "libmp3lame", "-f", "mp3", "pipe:1"],
+        capture_output=True, check=True)
+    mp3 = proc.stdout
+    timing = [WordTiming("a", 0.0, 0.05)]
+    clip = render_segment(
+        "**a**", timing, mp3, None, b"", width=1920, height=1080,
+        renderer=pillow_renderer(width=1920, height=1080),
+        encoder=ffmpeg_encoder(),
+    )
+    path = tmp_path / "segment-1.mp4"
+    path.write_bytes(clip)
+    res = check.check_video(path, kind="clip")
+    assert res.ok, res.failures
