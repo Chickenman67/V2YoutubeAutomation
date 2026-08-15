@@ -353,7 +353,7 @@ def ffmpeg_encoder() -> Encoder:
                 "ffmpeg", "-y", "-v", "error",
                 "-f", "rawvideo", "-pix_fmt", "rgb24",
                 "-s", f"{width}x{height}", "-r", str(fps), "-i", raw_path,
-                "-i", audio_path,
+                "-itsoffset", str(config.OPEN_PADDING_S), "-i", audio_path,
                 *config.VIDEO_ENCODE_FLAGS,
                 *config.AUDIO_ENCODE_FLAGS,
                 "-shortest",

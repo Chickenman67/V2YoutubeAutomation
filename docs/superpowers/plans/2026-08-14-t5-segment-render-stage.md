@@ -69,7 +69,7 @@
 **Interfaces:**
 - `resolve_font(size: int, *, font: str | None) -> Any` — if `font` given, `ImageFont.truetype(font, size)`; else `ImageFont.load_default(size=size)` (Pillow ≥ 10.1). Wrapped so calling it is safe offline.
 - `class ImageRenderer(Protocol): def __call__(self, specs: tuple[FrameSpec,...], hero: object, *, palette: dict[str, str]) -> tuple[bytes,...]: ...`
-- `make_hero(brief: dict[str, object], *, renderer: ImageRenderer, font) -> bytes` — the renderer draws the 16:9 title still; real impl in Task 5. Signature only here.
+- `make_hero(brief: dict[str, object], *, font: object | None = None) -> bytes` — the 16:9 title still (PNG), drawn directly with Pillow (a still needs no `ImageRenderer` seam); real impl in Task 5. Pillow is declared + installed in this task since `resolve_font` needs it.
 - `class Encoder(Protocol): def __call__(self, frames: tuple[bytes,...], *, width: int, height: int, fps: int, audio: bytes) -> bytes: ...`
 - `fake_renderer() -> ImageRenderer` — each frame → `b"frame-<i>"` (deterministic).
 - `fake_encoder() -> Encoder` — returns `b"fake-mp4"`.
@@ -98,7 +98,7 @@
 - `class RenderError(RuntimeError)`.
 - `ffmpeg_encoder(*, fps: int = config.FPS) -> Encoder` — feeds raw `rgb24` frames via stdin to ffmpeg (`-f rawvideo -pix_fmt rgb24 -s WxH -r fps -i pipe:0`, then `-c:v libx264` + `config.VIDEO_ENCODE_FLAGS[1:]`, `-c:a` mux from `pipe:1` or an mp3 path input, `-shortest`), `-movflags +faststart`. Wraps `OSError`/non-zero in `RenderError`. (Mirror `narrate._decode_mp3`/`ffmpeg_encoder` hygiene: `check=False`, capture stderr, `# type: ignore` for bytes.)
 - `SegmentRenderResult = dataclass(index, status, ok, message)` (shape mirrors `narrate.SegmentResult`).
-- `render_segment(lay, index, *, script_text, timing: Sequence[WordTiming], mp3: bytes, footline: str | None, renderer, encoder) -> bytes` — parse lines → `parse_caption_line` each → `plan_frames` → `renderer(...)` → `encoder(...)` muxed with `mp3`. Pure-ish (no disk / no reads) so it is directly unit-testable with fakes.
+- `render_segment(script_text: str, timing: Sequence[WordTiming], mp3: bytes, footline: str | None, hero: bytes, *, renderer, encoder, fps=config.FPS, width=config.FULL_WIDTH, height=config.FULL_HEIGHT) -> bytes` — parse lines → captions → `plan_frames` → `renderer(...)` → `encoder(...)` muxed with `mp3` (audio delayed `-itsoffset OPEN_PADDING_S`). Pure-ish (no disk reads) so directly unit-testable with fakes.
 - `render_approved(lay, *, renderer, encoder, hero: bytes) -> list[SegmentRenderResult]` — read index; for each `approved`: read script `.txt`, timing `.jsonl` (`parse_timing` via a small local reader reusing `check._parse_timing` or its own `read_timing`), mp3 bytes, footline from `brief` publisher; call `render_segment`; atomic-write `build/segments/segment-<n>.mp4`; skip others; `needs-human` → skip warning; `RenderError`/`OSError` → `ok=False`, no partial.
 - Tests (fakes): `render_segment` returns fixed bytes; `render_approved` writes `.mp4` for approved, skips needs-human, `ok=False` + no file when narration missing. Gated (ffmpeg): one tiny real clip (`vibe` pure path with a 2-frame `plan_frames` at low res via a reduced test helper or by passing small `width/height` through `render_segment`) → `probe_media`/`check_video(kind="clip")` passes (codec/res/audio/duration). Commit `T5: real ffmpeg encoder + per-segment orchestra (#T5)`.
 

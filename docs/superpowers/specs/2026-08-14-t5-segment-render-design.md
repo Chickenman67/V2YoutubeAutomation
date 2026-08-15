@@ -35,16 +35,16 @@ New pure module `vibe/render.py` plus a thin CLI seam, mirroring `vibe/narrate.p
 
 ### Seams (Protocols)
 
-- `ImageRenderer.__call__(specs: tuple[FrameSpec,...], hero: object, palette: Palette) -> tuple[bytes,...]` — draws every frame into raw RGB bytes (`width*height*3`) using Pillow. Real `pillow_renderer(*, font)`; **fake** `fake_renderer()` returns canned bytes (e.g. `b"frame-<i>"` repeated) so tests never construct images.
-- `make_hero(brief, *, renderer, font) -> bytes` — the 16:9 title still (PNG bytes) from the brief title/segment titles + palette. Owner: PIL (toolchain-split §2.3). Returns the same deterministic pixels every run (no date/seed).
-- `Encoder.__call__(frames: tuple[bytes,...], *, width, height, fps, audio: bytes) -> bytes` — encodes raw RGB frames + muxes the narration mp3 into a `.mp4` honoring `config` fixed flags. Real `ffmpeg_encoder()` feeds `rawvideo` frames on stdin; **fake** `fake_encoder()` returns fixed bytes for tests.
+- `ImageRenderer.__call__(specs: tuple[FrameSpec,...], hero: object, palette: Palette) -> tuple[bytes,...]` — draws every frame into raw RGB bytes (`width*height*3`) using Pillow. Real `pillow_renderer(*, width=FULL_WIDTH, height=FULL_HEIGHT, font=None)`; **fake** `fake_renderer()` returns canned bytes so tests never construct images.
+- `make_hero(brief, *, font=None) -> bytes` — the 16:9 title still (PNG bytes) from the brief title/segment titles + palette. Owner: PIL (toolchain-split §2.3). Returns the same deterministic pixels every run (no date/seed). Drawn directly with Pillow (a still needs no `ImageRenderer` seam).
+- `Encoder.__call__(frames: tuple[bytes,...], *, width, height, fps, audio: bytes) -> bytes` — encodes raw RGB frames + muxes the narration mp3 into a deterministic `.mp4` honoring `config` fixed flags, delaying audio by `OPEN_PADDING_S` (`-itsoffset`) so narration lands in the body and the container ends at the video (open + body). Real `ffmpeg_encoder()`; **fake** `fake_encoder()` returns fixed bytes for tests.
 
 ### Orchestrator
 
 - `SegmentRenderResult` — `(index: int, status: str, ok: bool, message: str)`; same shape as `narrate.SegmentResult` so the CLI loop is identical.
-- `render_segment(lay, index, *, renderer, encoder) -> RenderResult` — reads the approved script, narration timing + mp3, the (already-built) `hero.png`; computes `plan_frames`; draws via `renderer`; muxes via `encoder`; returns in-memory `mp4_bytes` (no I/O, like `narrate_segment`).
-- `render_hero(lay, *, brief, renderer, font) -> Path` — writes `build/hero.png` (temp-then-rename) once, deterministically, from the brief (assembly §2.3: identical across segments).
-- `render_approved(lay, *, renderer, encoder, hero) -> list[SegmentRenderResult]` — ensures `hero.png` exists (render it if missing), then for each `approved` segment renders and writes `build/segments/segment-<n>.mp4` (temp-then-rename so no partial clip); skips `needs-human`/not-approved with a warning; on failure reports `ok=False`, writes nothing for that segment, and completed segments stay (best-effort, mirroring `narrate`).
+- `read_timing(path) -> list[WordTiming]` — parse a `.timing.jsonl` into word timings (pure).
+- `render_segment(script_text, timing, mp3, footline, hero, *, renderer, encoder) -> bytes` — parse lines into captions → `plan_frames` → draw via `renderer` → mux via `encoder`; returns in-memory `mp4_bytes` (no I/O, like `narrate_segment`).
+- `render_approved(lay, *, renderer, encoder, font=None) -> list[SegmentRenderResult]` — ensures `hero.png` exists (renders it via `make_hero` if missing, temp-then-rename), then for each `approved` segment renders and writes `build/segments/segment-<n>.mp4` (temp-then-rename so no partial clip); skips `needs-human`/not-approved with a warning; on failure reports `ok=False`, writes nothing for that segment, and completed segments stay (best-effort, mirroring `narrate`).
 
 ## 3. Timeline & the amended excursion (assembly §3, §2.2)
 

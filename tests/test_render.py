@@ -298,8 +298,12 @@ def test_ffmpeg_encoder_real_clip_matches_contract(ffmpeg_available, tmp_path):
         "**a**", timing, mp3, None, b"", width=1920, height=1080,
         renderer=pillow_renderer(width=1920, height=1080),
         encoder=ffmpeg_encoder(),
-    )
+)
     path = tmp_path / "segment-1.mp4"
     path.write_bytes(clip)
     res = check.check_video(path, kind="clip")
     assert res.ok, res.failures
+    timing = tmp_path / "segment-1.timing.jsonl"
+    timing.write_text('{"word": "a", "start_s": 0.0, "end_s": 0.05}\n', encoding="utf-8")
+    timed = check.check_video(path, kind="clip", timing=timing)
+    assert timed.ok, timed.failures
