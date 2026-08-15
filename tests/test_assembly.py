@@ -85,3 +85,41 @@ def test_expected_full_duration_arithmetic():
 def test_fanout_range():
     assert list(assembly._fanout(4)) == [2, 3, 4]
     assert list(assembly._fanout(1)) == []
+
+
+import pytest
+
+
+def test_fake_recap_encoder_deterministic():
+    enc = assembly.fake_recap_encoder()
+    a = enc(b"png", width=1920, height=1080, fps=30, seconds=3.0)
+    b = enc(b"png", width=1920, height=1080, fps=30, seconds=3.0)
+    assert a == b"recap-clip"
+    assert a == b
+
+
+def test_fake_concatener_writes_out(tmp_path):
+    con = assembly.fake_concatener()
+    out = tmp_path / "full.mp4"
+    con([tmp_path / "a.mp4"], out, list_text="file 'a.mp4'\n")
+    assert out.read_bytes() == b"full.mp4"
+
+
+def test_make_recap_deterministic_png():
+    pytest.importorskip("PIL")
+    import io as _io
+
+    from PIL import Image as _PILImage
+
+    from vibe import assembly
+
+    brief = {"topic_brief": {
+        "title": "Rates Are Up",
+        "segments": [{"title": "The Context"}],
+        "sources": [{"publisher": "CNBC"}],
+    }}
+    a = assembly.make_recap(brief)
+    b = assembly.make_recap(brief)
+    assert a == b
+    assert a.startswith(b"\x89PNG")
+    assert _PILImage.open(_io.BytesIO(a)).size == (config.FULL_WIDTH, config.FULL_HEIGHT)
