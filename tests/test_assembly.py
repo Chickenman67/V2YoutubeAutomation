@@ -123,3 +123,56 @@ def test_make_recap_deterministic_png():
     assert a == b
     assert a.startswith(b"\x89PNG")
     assert _PILImage.open(_io.BytesIO(a)).size == (config.FULL_WIDTH, config.FULL_HEIGHT)
+
+
+import subprocess
+
+from vibe import check
+
+
+@pytest.fixture()
+def ffmpeg() -> bool:
+    import shutil
+    return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+
+
+def test_ffmpeg_recap_encoder_real_clip_matches_contract(ffmpeg, tmp_path):
+    if not ffmpeg:
+        pytest.skip("ffmpeg/ffprobe not on PATH")
+    from vibe import assembly
+
+    recap = assembly.make_recap({"topic_brief": {"title": "t", "segments": [], "sources": []}})
+    clip = assembly.ffmpeg_recap_encoder()(
+        recap, width=1920, height=1080, fps=30, seconds=config.RECAP_SECONDS
+    )
+    path = tmp_path / "recap.mp4"
+    path.write_bytes(clip)
+    res = check.check_video(path, kind="full")
+    assert res.ok, res.failures
+
+
+def test_ffmpeg_concatener_real_concat(ffmpeg, tmp_path):
+    if not ffmpeg:
+        pytest.skip("ffmpeg/ffprobe not on PATH")
+    from vibe import assembly
+    from vibe.narrate import WordTiming
+
+    # two tiny self-contained clips via the real T5 encoder
+    from vibe.render import ffmpeg_encoder, pillow_renderer, render_segment
+
+    mp3 = subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
+         "-t", "0.1", "-c:a", "libmp3lame", "-f", "mp3", "pipe:1"],
+        capture_output=True, check=True).stdout
+    clips = []
+    for n in (1, 2):
+        clip = render_segment("**a**", [WordTiming("a", 0.0, 0.05)], mp3, None, b"",
+                              renderer=pillow_renderer(width=1920, height=1080),
+                              encoder=ffmpeg_encoder())
+        p = tmp_path / f"seg-{n}.mp4"
+        p.write_bytes(clip)
+        clips.append(p)
+    out = tmp_path / "full.mp4"
+    assembly.ffmpeg_concatener()(clips, out, list_text=assembly.concat_list(clips))
+    res = check.check_video(out, kind="full")
+    assert res.ok, res.failures

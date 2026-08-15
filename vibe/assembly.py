@@ -12,6 +12,9 @@ never a human gate beyond the segment-1 preview.
 from __future__ import annotations
 
 import io
+import os
+import subprocess
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -113,3 +116,88 @@ def make_recap(brief: dict[str, object], *, font: object | None = None) -> bytes
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def ffmpeg_recap_encoder(
+    *,
+    fps: int = config.FPS,
+    width: int = config.FULL_WIDTH,
+    height: int = config.FULL_HEIGHT,
+) -> RecapEncoder:
+    """Real recap-clip encoder: still-loop + silent AAC -> deterministic .mp4."""
+
+    def _enc(png: bytes, *, width: int, height: int, fps: int, seconds: float) -> bytes:
+        png_path: str | None = None
+        mp4_path: str | None = None
+        proc = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as pf:
+                png_path = pf.name
+                pf.write(png)
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as mf:
+                mp4_path = mf.name
+            cmd = [
+                "ffmpeg", "-y", "-v", "error",
+                "-loop", "1", "-framerate", str(fps), "-i", png_path,
+                "-f", "lavfi", "-i", f"anullsrc=r={config.AUDIO_SAMPLE_RATE}:cl=stereo",
+                *config.VIDEO_ENCODE_FLAGS,
+                *config.AUDIO_ENCODE_FLAGS,
+                "-t", str(seconds),
+                *config.MUX_FLAGS,
+                mp4_path,
+            ]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, check=False)
+            except OSError as exc:
+                raise AssemblyError(f"ffmpeg not found: {exc}") from exc
+            if proc is None or proc.returncode != 0:
+                detail = repr(proc.stderr) if proc is not None else "not run"
+                raise AssemblyError(f"ffmpeg recap encode failed: {detail}")
+            with open(mp4_path, "rb") as mh:
+                return mh.read()
+        finally:
+            if png_path is not None:
+                os.remove(png_path)
+            if mp4_path is not None:
+                os.remove(mp4_path)
+
+    return _enc
+
+
+def ffmpeg_concatener() -> Concatener:
+    """Real copy-concatener: `ffmpeg -f concat -safe 0 -i list -c copy +faststart`."""
+
+    def _concat(clips: Sequence[Path], out: Path, *, list_text: str) -> None:
+        list_path: str | None = None
+        tmp = out.with_suffix(out.suffix + ".tmp")
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False, encoding="utf-8"
+            ) as lf:
+                list_path = lf.name
+                lf.write(list_text)
+            cmd = [
+                "ffmpeg", "-y", "-v", "error",
+                "-f", "concat", "-safe", "0", "-i", list_path,
+                "-c", "copy", "-f", "mp4", *config.MUX_FLAGS,
+                str(tmp),
+            ]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, check=False)
+            except OSError as exc:
+                raise AssemblyError(f"ffmpeg not found: {exc}") from exc
+            if proc is None or proc.returncode != 0:
+                detail = repr(proc.stderr) if proc is not None else "not run"
+                raise AssemblyError(f"ffmpeg concat failed: {detail}")
+            os.replace(tmp, out)
+        except AssemblyError:
+            raise
+        except Exception:
+            if tmp.exists():
+                tmp.unlink()
+            raise
+        finally:
+            if list_path is not None:
+                os.remove(list_path)
+
+    return _concat
