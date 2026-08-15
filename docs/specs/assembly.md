@@ -50,6 +50,8 @@ One clip per segment, produced once by Remotion, consumed by both the full video
 
 The render is **self-contained**: audio and captions are inside the clip. ffmpeg never re-synthesises, re-times, or re-burns.
 
+> **T5 implementation note (2026-08):** the per-segment render is produced by the adopted **PIL-frames + ffmpeg** path (`vibe render`, `vibe/render.py`) — per-frame compositing via Pillow (paper background, eased t=0 zoom of the hero still, keyword partial-bolding + source footlines burned on the spoken word) finished by an ffmpeg encode with the fixed `config` flags, narration audio delayed `OPEN_PADDING_S` and muxed (`-shortest`). This amends `docs/research/toolchain-split.md`'s Remotion recommendation as a stage-specific determinism/offline-build trade; `toolchain-split.md` is not changed.
+
 ### 2.3 Stills (PIL)
 
 - **Hero frame** `hero.png`, 1920×1080 — the zoom-in base; baked into every segment render's open. Must be identical across all segments (one deterministic PIL run).

@@ -14,7 +14,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__, check, discover, layout, narrate, script
+from . import __version__, check, discover, layout, narrate, render, script
 
 USAGE = "a video needs a thesis"
 
@@ -29,6 +29,12 @@ def _select_narrator() -> tuple[narrate.Synthesizer, narrate.Encoder]:
     if os.environ.get("VIBE_NARRATOR") == "fake":
         return narrate.fake_synthesizer(), narrate.fake_encoder()
     return narrate.edge_tts_synthesizer(), narrate.ffmpeg_encoder()
+
+
+def _select_renderer() -> tuple[render.ImageRenderer, render.Encoder]:
+    if os.environ.get("VIBE_RENDERER") == "fake":
+        return render.fake_renderer(), render.fake_encoder()
+    return render.pillow_renderer(), render.ffmpeg_encoder()
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -67,6 +73,11 @@ def _build_parser() -> argparse.ArgumentParser:
     nar.add_argument("--build", type=Path, default=Path("build"), metavar="DIR",
                      help="build root with scripts/index.json (default: ./build)")
     nar.set_defaults(_handler=_cmd_narrate)
+
+    rend = sub.add_parser("render", help="render approved segments to self-contained clips")
+    rend.add_argument("--build", type=Path, default=Path("build"), metavar="DIR",
+                      help="build root with scripts/index.json (default: ./build)")
+    rend.set_defaults(_handler=_cmd_render)
     return parser
 
 
@@ -130,6 +141,21 @@ def _cmd_narrate(args: argparse.Namespace) -> int:
         return 2
     synthesizer, encoder = _select_narrator()
     results = narrate.narrate_approved(lay, synthesizer=synthesizer, encoder=encoder)
+    failed = False
+    for res in results:
+        print(res.message, file=sys.stderr if not res.ok else sys.stdout)
+        failed = failed or (not res.ok and res.status == script.STATUS_APPROVED)
+    return 1 if failed else 0
+
+
+def _cmd_render(args: argparse.Namespace) -> int:
+    lay = layout.Layout(root=args.build)
+    if not (lay.scripts / "index.json").is_file():
+        print(f"vibe render: no {lay.scripts.joinpath('index.json').as_posix()}; "
+              f"run `vibe make` first", file=sys.stderr)
+        return 2
+    renderer, encoder = _select_renderer()
+    results = render.render_approved(lay, renderer=renderer, encoder=encoder)
     failed = False
     for res in results:
         print(res.message, file=sys.stderr if not res.ok else sys.stdout)

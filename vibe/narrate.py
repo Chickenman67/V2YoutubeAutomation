@@ -163,6 +163,12 @@ class NarrationError(RuntimeError):
     """Raised when real TTS synthesis or the ffmpeg codec fails."""
 
 
+def _signed_prosody(value: str) -> str:
+    """edge-tts requires a signed prosody (`+0%`, `-8%`); our spec's bare `0%` is
+    accepted by normalizing to `+0%` so the real synthesizer tolerates it."""
+    return value if value[:1] in "+-" else "+" + value
+
+
 def edge_tts_synthesizer(voice: str = config.NARRATION_VOICE) -> Synthesizer:
     """Real synthesizer via edge-tts (requires network)."""
 
@@ -171,7 +177,11 @@ def edge_tts_synthesizer(voice: str = config.NARRATION_VOICE) -> Synthesizer:
     def _synth(text: str, *, voice: str = voice, rate: str = "0%", volume: str = "0%") -> SynthResult:
         try:
             comm = edge_tts.Communicate(
-                text, voice, rate=rate, volume=volume, boundary="WordBoundary"
+                text,
+                voice,
+                rate=_signed_prosody(rate),
+                volume=_signed_prosody(volume),
+                boundary="WordBoundary",
             )
             audio = bytearray()
             words: list[WordTiming] = []

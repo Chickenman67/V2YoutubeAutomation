@@ -292,3 +292,10 @@ def test_narrate_approved_synth_failure_writes_no_partial(tmp_path: Path, monkey
     assert results[0].ok is False and "boom" in results[0].message
     assert not (lay.narration / "segment-1.mp3").exists()
     assert not (lay.narration / "segment-1.timing.jsonl").exists()
+
+
+def test_signed_prosody_normalizes_unsigned():
+    from vibe.narrate import _signed_prosody
+    assert _signed_prosody("0%") == "+0%"
+    assert _signed_prosody("+12%") == "+12%"
+    assert _signed_prosody("-8%") == "-8%"
