@@ -201,3 +201,25 @@ def test_fake_encoder_deterministic():
     first = e(frames, width=1920, height=1080, fps=30, audio=b"a")
     assert first == b"fake-mp4"
     assert e(frames, width=1920, height=1080, fps=30, audio=b"a") == first
+
+
+def test_make_hero_deterministic_png():
+    pytest.importorskip("PIL")
+    from vibe.render import make_hero
+
+    brief = {"topic_brief": {"title": "Rates Are Up", "segments": [{"title": "The Context"}]}}
+    a = make_hero(brief)
+    b = make_hero(brief)
+    assert a == b
+    assert a.startswith(b"\x89PNG")
+
+
+def test_pillow_renderer_produces_rgb_frames():
+    pytest.importorskip("PIL")
+    from vibe.render import pillow_renderer
+
+    spec = plan_frames([_cl((_w("hi", "base", 0.0, 0.3),), 0.0, 0.3)], fps=30, width=64, height=64)
+    r = pillow_renderer(width=64, height=64)
+    frames = r(spec, hero=b"", palette=config.PALETTE)
+    assert frames
+    assert all(len(f) == 64 * 64 * 3 for f in frames)

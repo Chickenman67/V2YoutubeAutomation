@@ -9,8 +9,9 @@ rendered; they only style captions.
 
 from __future__ import annotations
 
+import io
 from collections.abc import Sequence
-from typing import NamedTuple, Protocol
+from typing import Any, NamedTuple, Protocol, cast
 
 from . import config
 from .narrate import ChunkKind, WordTiming, parse_line
@@ -188,3 +189,126 @@ def fake_encoder() -> Encoder:
         return b"fake-mp4"
 
     return _enc
+
+
+def _pillow() -> tuple[Any, Any]:
+    """Lazy-import Pillow so the module stays importable without it."""
+    from PIL import Image, ImageDraw
+
+    return Image, ImageDraw
+
+
+def _open_hero(hero: object) -> Any:
+    """Decode hero PNG bytes into a PIL Image (or None when absent/invalid)."""
+    if not isinstance(hero, (bytes, bytearray)):
+        return None
+    Image, _ = _pillow()
+    try:
+        return Image.open(io.BytesIO(bytes(hero)))
+    except Exception:  # noqa: BLE001 - invalid bytes: fall back to the plain bg
+        return None
+
+
+def _font_width(font: Any, text: str) -> int:
+    bbox = font.getbbox(text)
+    return int(bbox[2] - bbox[0])
+
+
+def _paste_zoom(canvas: Any, hero_img: Any, scale: float) -> None:
+    if hero_img is None:
+        return
+    w, h = hero_img.size
+    nw = max(1, round(w * scale))
+    nh = max(1, round(h * scale))
+    if (nw, nh) == (w, h):
+        scaled = hero_img
+    else:
+        Image, _ = _pillow()
+        scaled = hero_img.resize((nw, nh), Image.LANCZOS)
+    x = (canvas.width - nw) // 2
+    y = (canvas.height - nh) // 2
+    canvas.paste(scaled, (x, y))
+
+
+# ChunkKind -> design-standard §6 palette role (color carries meaning).
+_KIND_COLOUR: dict[ChunkKind, str] = {
+    "base": "ink",
+    "keyword": "positive",
+    "figure": "risk",
+    "gold": "gold",
+}
+
+
+def _draw_caption(
+    frame: Any,
+    caption: Caption,
+    cap_font: object,
+    fig_font: object,
+    foot_font: object,
+    palette: dict[str, str],
+) -> None:
+    """Draw a single line caption, partial-emphasis by colour/size, centered."""
+    _, ImageDraw = _pillow()
+    draw = ImageDraw.Draw(frame)
+    fonts = [fig_font if s.kind == "figure" else cap_font for s in caption.spans]
+    widths = [_font_width(f, s.text) for s, f in zip(caption.spans, fonts)]
+    total = sum(widths)
+    x = (frame.width - total) / 2.0
+    baseline = frame.height - 260
+    for span, font, w in zip(caption.spans, fonts, widths):
+        draw.text((x, baseline), span.text, font=font,
+                  fill=palette[_KIND_COLOUR[span.kind]], anchor="ls")
+        x += w
+    if caption.footline:
+        draw.text((frame.width / 2.0, frame.height - 70), caption.footline,
+                  font=foot_font, fill=palette["ink"], anchor="ms")
+
+
+def pillow_renderer(
+    *,
+    width: int = config.FULL_WIDTH,
+    height: int = config.FULL_HEIGHT,
+    font: object | None = None,
+) -> ImageRenderer:
+    """Real frame renderer: paper-bg + zoomed hero + burned caption per FrameSpec."""
+
+    def _r(specs: tuple[FrameSpec, ...], hero: object, *, palette: dict[str, str]) -> tuple[bytes, ...]:
+        Image, _ = _pillow()
+        hero_img = _open_hero(hero)
+        cap_font = font if font is not None else resolve_font(config.CAPTION_SIZE)
+        fig_font = font if font is not None else resolve_font(int(config.CAPTION_SIZE * 1.15))
+        foot_font = font if font is not None else resolve_font(config.FOOTLINE_SIZE)
+        out: list[bytes] = []
+        for spec in specs:
+            frame = Image.new("RGB", (width, height), palette["bg"])
+            _paste_zoom(frame, hero_img, spec.scale)
+            if spec.caption is not None:
+                _draw_caption(frame, spec.caption, cap_font, fig_font, foot_font, palette)
+            out.append(frame.tobytes())
+        return tuple(out)
+
+    return _r
+
+
+def make_hero(brief: dict[str, object], *, font: object | None = None) -> bytes:
+    """The deterministic 16:9 title still (PNG) the zoom opens from."""
+    Image, ImageDraw = _pillow()
+    tb = cast(dict[str, object], brief["topic_brief"])
+    palette = config.PALETTE
+    img = Image.new("RGB", (config.FULL_WIDTH, config.FULL_HEIGHT), palette["bg"])
+    draw = ImageDraw.Draw(img)
+    title_font = font if font is not None else resolve_font(72)
+    seg_font = font if font is not None else resolve_font(36)
+    title = str(tb["title"])
+    draw.text((img.width / 2.0, img.height * 0.4), title, font=title_font,
+              fill=palette["ink"], anchor="mm")
+    y = img.height * 0.62
+    segs = cast(list[object], tb.get("segments", []))
+    for seg in segs:
+        segd = cast(dict[str, object], seg)
+        draw.text((img.width / 2.0, y), str(segd["title"]), font=seg_font,
+                  fill=palette["positive"], anchor="mm")
+        y += 64
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
