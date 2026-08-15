@@ -41,10 +41,16 @@ New module `vibe/shorts.py`, mirroring the repo seam pattern (pure core + inject
 
 - `render_shorts(lay: layout.Layout, *, renderer: render.ImageRenderer, encoder: render.Encoder, font: object | None = None) -> list[ShortResult]` — the whole stage:
   1. Load `brief.json` + `scripts/index.json` (missing index → CLI exits 2 upstream). Ensure `hero.png` (`render.make_hero` if missing).
-  2. For each `approved` segment: read script + timing + mp3; `clip = render.render_segment(text, timing, mp3, footline, hero, renderer=renderer, encoder=encoder, width=config.SHORT_WIDTH, height=config.SHORT_HEIGHT)`; atomic-write `shorts/short-<n>.mp4`. Newline: this uses the **same narration audio/timing** — a short is a repackaged segment, never a new idea (§7, CONTEXT.md). Non-approved segments are skipped and reported.
+  2. For each `approved` segment: read script + timing + mp3; `clip = render.render_segment(text, timing, mp3, footline, hero, renderer=renderer, encoder=encoder, width=config.SHORT_WIDTH, height=config.SHORT_HEIGHT)`; atomic-write `shorts/short-<n>.mp4`. Note: this uses the **same narration audio/timing** — a short is a repackaged segment, never a new idea (§7, CONTEXT.md). Non-approved segments are skipped and reported.
   3. Write `cc/segment-<n>.srt` (`build_segment_srt`) atomically per approved segment.
   4. Write `cc/full.srt` (`build_full_srt` over the approved segments, contract-formula durations) atomically last (after all segments, so its offsets are complete).
 - `ShortResult` per segment (render + sidecar) and one for `full.srt`.
+
+### CLI wiring (`vibe shorts`)
+
+- `vibe shorts [--build DIR]` (default `./build`); missing `scripts/index.json` → message + exit 2 (same as `render`/`assemble`).
+- Selects seams via env: **real mode** passes `shorts.vertical_renderer()` with `render.ffmpeg_encoder()` to `render_shorts` (NOT the 16:9 `pillow_renderer`); `VIBE_RENDERER=fake` selects `fake_renderer()` + `fake_encoder()` for offline CLI tests (same env idiom as the other subcommands).
+- Per-result print (errors to stderr), exit `1` if any approved segment's short failed, else `0`.
 
 ## 3. Output contract (assembly §9)
 
