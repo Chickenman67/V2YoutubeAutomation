@@ -13,6 +13,7 @@ import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from . import __version__, assembly, check, discover, layout, narrate, render, script, shorts
 
@@ -28,6 +29,8 @@ def _select_script_author() -> script.Author:
 def _select_narrator() -> tuple[narrate.Synthesizer, narrate.Encoder]:
     if os.environ.get("VIBE_NARRATOR") == "fake":
         return narrate.fake_synthesizer(), narrate.fake_encoder()
+    if os.environ.get("VIBE_NARRATOR") == "offline":
+        return narrate.offline_synthesizer(), narrate.ffmpeg_encoder()
     return narrate.edge_tts_synthesizer(), narrate.ffmpeg_encoder()
 
 
@@ -59,6 +62,13 @@ def _gate_prompt() -> bool:
     return answer in ("y", "yes")
 
 
+def _segments_value(value: str) -> int:
+    parsed = int(value)
+    if not 1 <= parsed <= 5:
+        raise argparse.ArgumentTypeError("--segments must be 1..5")
+    return parsed
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="vibe")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -73,6 +83,8 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help="directory of local RSS/XML files for offline topic discovery",
     )
+    make.add_argument("--segments", type=_segments_value, default=None, metavar="N",
+                      help="restrict the topic to N segments (1..5)")
     make.set_defaults(_handler=_cmd_make)
 
     ck = sub.add_parser("check", help="validate an artifact against the media contract")
@@ -141,6 +153,10 @@ def _cmd_make(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 0
+    n = getattr(args, "segments", None)
+    if n is not None:
+        tb = cast(dict[str, object], topic_brief["topic_brief"])
+        tb["segments"] = cast(list[object], tb["segments"])[: n]
     text = json.dumps(topic_brief, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     created.topic_brief.write_text(text, encoding="utf-8")
     print(f"topic brief written to {created.topic_brief.as_posix()}")

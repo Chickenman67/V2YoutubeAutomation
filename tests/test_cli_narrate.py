@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
+import wave
 from pathlib import Path
 
 import vibe.cli
-from vibe import narrate, script
+from vibe import cli, config, narrate, script
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -67,3 +69,12 @@ def test_narrate_synth_failure_exits_1(run_cli, tmp_path: Path, monkeypatch, cap
     assert rc == 1
     assert "boom" in captured.err
     assert not (build / "narration" / "segment-1.mp3").exists()
+
+
+def test_select_narrator_offline(monkeypatch):
+    monkeypatch.setenv("VIBE_NARRATOR", "offline")
+    synth, _ = cli._select_narrator()
+    audio, timings = synth("hi there")
+    assert [w.word for w in timings] == ["hi", "there"]
+    with wave.open(io.BytesIO(audio), "rb") as wf:
+        assert wf.getframerate() == config.AUDIO_SAMPLE_RATE

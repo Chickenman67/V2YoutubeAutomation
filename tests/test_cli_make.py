@@ -55,3 +55,22 @@ def test_make_is_idempotent(run_cli, tmp_path: Path):
     b = (tmp_path / "build" / "manifest.json").read_bytes()
     assert a == b
     assert (tmp_path / "build" / "segments").is_dir()
+
+
+def test_make_segments_two_bounds_topic(run_cli, tmp_path: Path):
+    proc = run_cli("make", "mortgage rates", "--feeds-from",
+                   str(Path(__file__).resolve().parent / "fixtures"),
+                   "--segments", "2", cwd=str(tmp_path))
+    assert proc.returncode == 0, proc.stderr
+    build = tmp_path / "build"
+    idx = json.loads((build / "scripts" / "index.json").read_text(encoding="utf-8"))
+    assert len(idx["scripts"]) == 2
+    brief = json.loads((build / "brief.json").read_text(encoding="utf-8"))
+    assert len(brief["topic_brief"]["segments"]) == 2
+
+
+def test_make_segments_out_of_range_exits_2(run_cli, tmp_path: Path):
+    for bad in ("0", "6"):
+        proc = run_cli("make", "mortgage rates", "--segments", bad, cwd=str(tmp_path))
+        assert proc.returncode == 2
+        assert "segments" in proc.stderr.lower()
