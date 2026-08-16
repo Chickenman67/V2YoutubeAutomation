@@ -146,3 +146,33 @@ def test_render_shorts_writes_short_and_cc(tmp_path):
     assert results[0].ok and "OK" in results[0].message
     assert results[1].ok is False and "skipped" in results[1].message
     assert results[-1].ok and "full.srt" in results[-1].message
+
+
+def test_ffmpeg_vertical_short_matches_contract(ffmpeg_available, tmp_path):
+    import subprocess
+
+    if not ffmpeg_available:
+        pytest.skip("ffmpeg/ffprobe not on PATH")
+    from vibe import check
+    from vibe.render import ffmpeg_encoder, render_segment
+    from vibe.shorts import build_segment_srt, vertical_renderer
+
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+         "-i", "anullsrc=r=44100:cl=mono", "-t", "0.1",
+         "-c:a", "libmp3lame", "-f", "mp3", "pipe:1"],
+        capture_output=True, check=True)
+    mp3 = proc.stdout
+    timing = [WordTiming("a", 0.0, 0.05)]
+    clip = render_segment(
+        "**a**", timing, mp3, None, b"",
+        width=config.SHORT_WIDTH, height=config.SHORT_HEIGHT,
+        renderer=vertical_renderer(), encoder=ffmpeg_encoder(),
+    )
+    path = tmp_path / "short-1.mp4"
+    path.write_bytes(clip)
+    res = check.check_video(path, kind="short")
+    assert res.ok, res.failures
+    srt = tmp_path / "short-1.srt"
+    srt.write_text(build_segment_srt("**a**", timing), encoding="utf-8")
+    assert check.check_srt(srt).ok
