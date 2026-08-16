@@ -62,10 +62,22 @@ The render is **self-contained**: audio and captions are inside the clip. ffmpeg
 - 1080×1920, 30 fps, same video/audio codec parameters as §2.2.
 - Native vertical re-render per segment (Remotion), re-framing the same art into the vertical safe zone, with captions repositioned. **Never letterbox the 16:9 clip into the feed** (retention research §5b: horizontal footage in the vertical feed is smaller and reads as wrong-aspect).
 
+> **T7 implementation note (2026-08):** the vertical short render and the CC sidecars
+> are driven by **`vibe shorts`** (`vibe/shorts.py`): per approved segment a native
+> 1080×1920@30 clip (`shorts/short-<n>.mp4`) is re-rendered with the hero cover-fill
+> center-cropped into the vertical frame (never letterboxed) and captions drawn in the
+> lower safe zone, reusing the same narration audio/timing and the §2.2 encoder flags.
+
 ### 2.5 CC sidecars (.srt)
 
 - Verbatim captions (markers stripped) derived from `.timing.jsonl` + script lines.
 - One per segment (the short's CC) and one for the full video (concatenated with running offsets).
+
+> **T7 implementation note (2026-08):** the vertical short render and the CC sidecars are
+> driven by **`vibe shorts`** (`vibe/shorts.py`).
+> Verbatim sidecars (`cc/segment-<n>.srt` + `cc/full.srt`) are playhead-aligned
+> (narration timing + `OPEN_PADDING_S`); the full-video sidecar uses running offsets via
+> the contract duration formula (`OPEN_PADDING_S` + segment narration end).
 
 ## 3. The amended camera excursion (retention, amends #5)
 
