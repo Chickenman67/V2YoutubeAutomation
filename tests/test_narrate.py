@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import wave
 from pathlib import Path
 
 from vibe import config, layout
@@ -300,9 +302,6 @@ def test_signed_prosody_normalizes_unsigned():
     assert _signed_prosody("+12%") == "+12%"
     assert _signed_prosody("-8%") == "-8%"
 
-
-import io
-import wave
 
 def test_offline_synth_timings_match_fake():
     from vibe import narrate
