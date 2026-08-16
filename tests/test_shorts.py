@@ -51,3 +51,55 @@ def test_build_full_srt_running_offsets(tmp_path: Path):
     p = tmp_path / "full.srt"
     p.write_text(text, encoding="utf-8")
     assert check.check_srt(p).ok
+
+
+import io as _io
+
+import pytest
+
+
+def _blank_png(w: int, h: int) -> bytes:
+    from PIL import Image as _PILImage
+
+    buf = _io.BytesIO()
+    _PILImage.new("RGB", (w, h), "white").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_cover_scale_vertical_default():
+    from vibe.shorts import _cover_scale
+
+    assert abs(_cover_scale(1080, 1920, 1920, 1080) - (1920 / 1080)) < 1e-9
+
+
+def test_cover_scale_uses_max_ratio():
+    from vibe.shorts import _cover_scale
+
+    # hero wider than the (square) canvas -> height ratio governs
+    assert abs(_cover_scale(100, 100, 200, 50) - 2.0) < 1e-9
+
+
+def test_vertical_renderer_produces_rgb_frames():
+    pytest.importorskip("PIL")
+    from vibe.render import CaptionLine, CaptionWord, plan_frames
+    from vibe.shorts import vertical_renderer
+
+    cl = CaptionLine((CaptionWord("hi", "base", 0.0, 0.3),), 0.0, 0.3, False)
+    spec = plan_frames([cl], fps=30, width=108, height=192)
+    r = vertical_renderer(width=108, height=192)
+    frames = r(spec, hero=b"", palette=config.PALETTE)
+    assert frames
+    assert all(len(f) == 108 * 192 * 3 for f in frames)
+
+
+def test_vertical_renderer_accepts_hero_bytes():
+    pytest.importorskip("PIL")
+    from vibe.render import CaptionLine, CaptionWord, plan_frames
+    from vibe.shorts import vertical_renderer
+
+    img = _blank_png(1920, 1080)
+    cl = CaptionLine((CaptionWord("hi", "base", 0.0, 0.3),), 0.0, 0.3, False)
+    spec = plan_frames([cl], fps=30, width=108, height=192)
+    r = vertical_renderer(width=108, height=192)
+    frames = r(spec, hero=img, palette=config.PALETTE)
+    assert frames and all(len(f) == 108 * 192 * 3 for f in frames)
