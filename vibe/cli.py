@@ -14,7 +14,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__, assembly, check, discover, layout, narrate, render, script
+from . import __version__, assembly, check, discover, layout, narrate, render, script, shorts
 
 USAGE = "a video needs a thesis"
 
@@ -35,6 +35,12 @@ def _select_renderer() -> tuple[render.ImageRenderer, render.Encoder]:
     if os.environ.get("VIBE_RENDERER") == "fake":
         return render.fake_renderer(), render.fake_encoder()
     return render.pillow_renderer(), render.ffmpeg_encoder()
+
+
+def _select_shorts_renderer() -> tuple[render.ImageRenderer, render.Encoder]:
+    if os.environ.get("VIBE_RENDERER") == "fake":
+        return render.fake_renderer(), render.fake_encoder()
+    return shorts.vertical_renderer(), render.ffmpeg_encoder()
 
 
 def _select_assembler() -> tuple[assembly.RecapEncoder, assembly.Concatener]:
@@ -99,6 +105,11 @@ def _build_parser() -> argparse.ArgumentParser:
     asm.add_argument("--build", type=Path, default=Path("build"), metavar="DIR",
                      help="build root with scripts/index.json (default: ./build)")
     asm.set_defaults(_handler=_cmd_assemble)
+
+    sh = sub.add_parser("shorts", help="render native 9:16 shorts + verbatim CC sidecars")
+    sh.add_argument("--build", type=Path, default=Path("build"), metavar="DIR",
+                    help="build root with scripts/index.json (default: ./build)")
+    sh.set_defaults(_handler=_cmd_shorts)
     return parser
 
 
@@ -202,6 +213,21 @@ def _cmd_assemble(args: argparse.Namespace) -> int:
     failed = not results or not results[-1].ok
     for res in results:
         print(res.message, file=sys.stderr if not res.ok else sys.stdout)
+    return 1 if failed else 0
+
+
+def _cmd_shorts(args: argparse.Namespace) -> int:
+    lay = layout.Layout(root=args.build)
+    if not (lay.scripts / "index.json").is_file():
+        print(f"vibe shorts: no {lay.scripts.joinpath('index.json').as_posix()}; "
+              f"run `vibe make` first", file=sys.stderr)
+        return 2
+    renderer, encoder = _select_shorts_renderer()
+    results = shorts.render_shorts(lay, renderer=renderer, encoder=encoder)
+    failed = False
+    for res in results:
+        print(res.message, file=sys.stderr if not res.ok else sys.stdout)
+        failed = failed or (not res.ok and res.status == script.STATUS_APPROVED)
     return 1 if failed else 0
 
 
