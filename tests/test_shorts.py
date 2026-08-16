@@ -103,3 +103,46 @@ def test_vertical_renderer_accepts_hero_bytes():
     r = vertical_renderer(width=108, height=192)
     frames = r(spec, hero=img, palette=config.PALETTE)
     assert frames and all(len(f) == 108 * 192 * 3 for f in frames)
+
+
+import json
+
+from vibe import layout, script
+
+
+def _index(*rows):
+    return {"video": "v", "scripts": [dict(r) for r in rows]}
+
+
+def test_render_shorts_writes_short_and_cc(tmp_path):
+    from vibe.render import fake_encoder, fake_renderer
+    from vibe.shorts import render_shorts
+
+    lay = layout.create_layout(tmp_path)
+    (lay.topic_brief).write_text(json.dumps(
+        {"topic_brief": {"title": "t", "segments": [], "sources": [{"publisher": "CNBC"}]}}),
+        encoding="utf-8")
+    (lay.hero).write_bytes(b"hero")
+    (lay.scripts / "index.json").write_text(json.dumps(_index(
+        {"index": 1, "file": "segment-1.txt", "word_count": 2,
+         "status": script.STATUS_APPROVED, "attempts": 1, "violations": []},
+        {"index": 2, "file": "segment-2.txt", "word_count": 0,
+         "status": script.STATUS_NEEDS_HUMAN, "attempts": 3, "violations": []},
+    )), encoding="utf-8")
+    (lay.scripts / "segment-1.txt").write_text("hello world", encoding="utf-8")
+    (lay.scripts / "segment-2.txt").write_text("bad", encoding="utf-8")
+    (lay.narration / "segment-1.mp3").write_bytes(b"mp3")
+    (lay.narration / "segment-1.timing.jsonl").write_text(
+        '{"word": "hello", "start_s": 0.0, "end_s": 0.2}\n'
+        '{"word": "world", "start_s": 0.2, "end_s": 0.5}\n',
+        encoding="utf-8")
+
+    results = render_shorts(lay, renderer=fake_renderer(), encoder=fake_encoder())
+    assert (lay.shorts / "short-1.mp4").read_bytes() == b"fake-mp4"
+    assert not (lay.shorts / "short-2.mp4").exists()
+    assert (lay.cc / "segment-1.srt").read_text(encoding="utf-8").startswith(
+        "1\n00:00:01,150 --> 00:00:01,650\nhello world")
+    assert (lay.cc / "full.srt").is_file()
+    assert results[0].ok and "OK" in results[0].message
+    assert results[1].ok is False and "skipped" in results[1].message
+    assert results[-1].ok and "full.srt" in results[-1].message

@@ -8,10 +8,12 @@ markers stripped, playhead-aligned). Markers are structural: never present in SR
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, cast
 
-from . import config, render
+from . import config, layout, render, script
 from .narrate import WordTiming
 
 Cue = tuple[float, float, str]
@@ -141,3 +143,61 @@ def vertical_renderer(
         return tuple(out)
 
     return _r
+
+
+@dataclass(frozen=True)
+class ShortResult:
+    index: int
+    status: str
+    ok: bool
+    message: str
+
+
+def render_shorts(
+    lay: layout.Layout,
+    *,
+    renderer: render.ImageRenderer,
+    encoder: render.Encoder,
+    font: object | None = None,
+) -> list[ShortResult]:
+    """Render every approved segment to a native 9:16 short + verbatim CC sidecars.
+
+    Writes `shorts/short-<n>.mp4`, `cc/segment-<n>.srt`, then `cc/full.srt`; skips
+    non-approved segments. A short is a repackaged segment (same narration audio/timing).
+    """
+    brief = json.loads(lay.topic_brief.read_text(encoding="utf-8"))
+    footline = render._footline(brief)
+    if not lay.hero.is_file():
+        render._write_atomic(lay.hero, render.make_hero(brief, font=font))
+    hero = lay.hero.read_bytes()
+    idx = script.read_index(lay)
+    rows = cast(list[object], idx["scripts"])
+    results: list[ShortResult] = []
+    approved: list[tuple[str, list[WordTiming]]] = []
+    for row in rows:
+        rec = cast(dict[str, object], row)
+        n = int(cast(Any, rec["index"]))
+        status = str(rec["status"])
+        if status != script.STATUS_APPROVED:
+            results.append(ShortResult(n, status, False, f"short-{n}.mp4: skipped ({status})"))
+            continue
+        try:
+            text = (lay.scripts / str(rec["file"])).read_text(encoding="utf-8")
+            timing = render.read_timing(lay.narration / f"segment-{n}.timing.jsonl")
+            mp3 = (lay.narration / f"segment-{n}.mp3").read_bytes()
+            clip = render.render_segment(
+                text, timing, mp3, footline, hero,
+                renderer=renderer, encoder=encoder,
+                width=config.SHORT_WIDTH, height=config.SHORT_HEIGHT,
+            )
+        except (render.RenderError, OSError, ValueError, KeyError) as exc:
+            results.append(ShortResult(n, status, False, f"short-{n}.mp4: error: {exc}"))
+            continue
+        render._write_atomic(lay.shorts / f"short-{n}.mp4", clip)
+        render._write_atomic(lay.cc / f"segment-{n}.srt",
+                             build_segment_srt(text, timing).encode("utf-8"))
+        approved.append((text, timing))
+        results.append(ShortResult(n, status, True, f"short-{n}.mp4: OK"))
+    render._write_atomic(lay.cc / "full.srt", build_full_srt(approved).encode("utf-8"))
+    results.append(ShortResult(0, "full", True, "full.srt: OK"))
+    return results
