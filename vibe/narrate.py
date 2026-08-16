@@ -10,10 +10,14 @@ never present in output.
 
 from __future__ import annotations
 
+import io
 import json
+import math
 import os
 import re
+import struct
 import subprocess
+import wave
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -157,6 +161,57 @@ def fake_encoder() -> Encoder:
         return b"fake-mp3"
 
     return _enc
+
+
+def _beep_wav(sample_rate: int, channels: int, freq: int, seconds: float, amplitude: int) -> bytes:
+    """Raw little-endian 16-bit PCM: a `seconds`-long sine beep, repeated per channel."""
+    n = int(seconds * sample_rate)
+    out = bytearray()
+    step = 2.0 * math.pi * freq / sample_rate
+    for i in range(n):
+        val = int(amplitude * math.sin(step * i))
+        for _ in range(channels):
+            out += struct.pack("<h", val)
+    return bytes(out)
+
+
+def offline_synthesizer(
+    voice: str = "offline-voice",
+    *,
+    sample_rate: int = config.AUDIO_SAMPLE_RATE,
+    channels: int = config.AUDIO_CHANNELS,
+    freq: int = 440,
+    word_s: float = 0.2,
+    gap_s: float = 0.05,
+    amplitude: int = 6000,
+) -> Synthesizer:
+    """Deterministic offline synthesizer: valid decodable per-word WAV beeps.
+
+    Word timings mirror `fake_synthesizer` (word_s/word, word_s+gap_s stride) so
+    caption sync and duration math are unchanged, but the audio is real, decodable,
+    and spans exactly the chunk's words -- so the real encoder + render produce valid
+    AAC clips whose container duration matches the narration end (no live TTS).
+    """
+    def _synth(text: str, *, voice: str = voice, rate: str = "0%", volume: str = "0%") -> SynthResult:
+        words = text.split()
+        timings: list[WordTiming] = []
+        t = 0.0
+        for w in words:
+            timings.append(WordTiming(w, round(t, 3), round(t + word_s, 3)))
+            t += word_s + gap_s
+        pcm = bytearray()
+        for i, w in enumerate(words):
+            pcm += _beep_wav(sample_rate, channels, freq, word_s, amplitude)
+            if i < len(words) - 1:
+                pcm += b"\x00" * (int(sample_rate * gap_s) * channels * 2)
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(bytes(pcm))
+        return (buf.getvalue(), tuple(timings))
+    return _synth
 
 
 class NarrationError(RuntimeError):

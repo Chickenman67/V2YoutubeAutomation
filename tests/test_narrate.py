@@ -299,3 +299,40 @@ def test_signed_prosody_normalizes_unsigned():
     assert _signed_prosody("0%") == "+0%"
     assert _signed_prosody("+12%") == "+12%"
     assert _signed_prosody("-8%") == "-8%"
+
+
+import io
+import wave
+
+def test_offline_synth_timings_match_fake():
+    from vibe import narrate
+    offline = narrate.offline_synthesizer()
+    fake = narrate.fake_synthesizer()
+    a = offline("a b c")
+    b = fake("a b c")
+    assert a[1] == b[1]
+    assert [w.word for w in a[1]] == ["a", "b", "c"]
+    assert a[1][0] == narrate.WordTiming("a", 0.0, 0.2)
+
+
+def test_offline_synth_returns_decodable_wav():
+    from vibe import config, narrate
+    audio, timings = narrate.offline_synthesizer()("a b c")
+    with wave.open(io.BytesIO(audio), "rb") as wf:
+        assert wf.getnchannels() == config.AUDIO_CHANNELS
+        assert wf.getframerate() == config.AUDIO_SAMPLE_RATE
+        assert wf.getsampwidth() == 2
+        frames = wf.getnframes()
+    last_end = timings[-1].end_s
+    expected = int(last_end * config.AUDIO_SAMPLE_RATE)
+    assert abs(frames - expected) <= config.AUDIO_SAMPLE_RATE // 4
+    # beeps present (non-silent audio)
+    assert any(abs(int.from_bytes(audio[i:i+2], "little")) > 3000
+               for i in range(44, len(audio), 8))
+
+
+def test_offline_synth_empty_text():
+    from vibe import narrate
+    audio, timings = narrate.offline_synthesizer()("   ")
+    assert timings == ()
+    assert b"WAVE" in audio
