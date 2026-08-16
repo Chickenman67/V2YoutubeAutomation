@@ -88,6 +88,41 @@ def _paste_cover(canvas: Any, hero_img: Any, scale: float) -> None:
     canvas.paste(resized, ((canvas.width - nw) // 2, (canvas.height - nh) // 2))
 
 
+def _fit_factor(total: float, keep: float) -> float:
+    """The uniform font scale that fits `total` px of caption within `keep` (<=1)."""
+    return min(1.0, keep / max(total, 1e-9))
+
+
+def _fit_layout(
+    spans: Sequence[render.StyledSpan],
+    cap_size: int,
+    fig_size: int,
+    keep: float,
+) -> tuple[list[object], list[int], float]:
+    """Fonts/widths for one caption, shrinking to fit `keep` (never upscales).
+
+    Falls back to a bounded decrement-by-1 refit when integer font-size rounding
+    leaves the line wider than `keep`, so the line always lands inside the safe zone.
+    """
+    fonts = [render.resolve_font(fig_size if s.kind == "figure" else cap_size) for s in spans]
+    widths = [render._font_width(f, s.text) for s, f in zip(spans, fonts)]
+    total = float(sum(widths))
+    if total <= keep:
+        return fonts, widths, total
+    factor = _fit_factor(total, keep)
+    cap = max(1, int(cap_size * factor))
+    fig = max(1, int(fig_size * factor))
+    while total > keep and cap > 1:
+        fonts = [render.resolve_font(fig if s.kind == "figure" else cap) for s in spans]
+        widths = [render._font_width(f, s.text) for s, f in zip(spans, fonts)]
+        total = float(sum(widths))
+        if total <= keep:
+            break
+        cap = max(1, cap - 1)
+        fig = max(1, fig - 1)
+    return fonts, widths, total
+
+
 def _draw_caption(
     frame: Any,
     caption: render.Caption,
@@ -95,15 +130,26 @@ def _draw_caption(
     fig_font: object,
     foot_font: object,
     palette: dict[str, str],
+    *,
+    shrink: bool = False,
 ) -> None:
-    """Draw a single-line caption in the vertical lower safe zone (clear of Shorts UI)."""
+    """Draw a single-line caption in the vertical lower safe zone, shrink-to-fit.
+
+    With `shrink` (the real renderer path) a caption wider than the safe zone is
+    scaled down to one centered line inside it; otherwise (custom-font seam) it is
+    drawn single-line as before.
+    """
     _, ImageDraw = render._pillow()
     draw = ImageDraw.Draw(frame)
-    fonts = [fig_font if s.kind == "figure" else cap_font for s in caption.spans]
-    widths = [render._font_width(f, s.text) for s, f in zip(caption.spans, fonts)]
-    total = sum(widths)
     keep = max(1, frame.width - 120)
-    x = (frame.width - total) / 2.0 if total <= keep else (frame.width - keep) / 2.0
+    if shrink:
+        fonts, widths, total = _fit_layout(
+            caption.spans, config.CAPTION_SIZE, int(config.CAPTION_SIZE * 1.15), float(keep))
+    else:
+        fonts = [fig_font if s.kind == "figure" else cap_font for s in caption.spans]
+        widths = [render._font_width(f, s.text) for s, f in zip(caption.spans, fonts)]
+        total = float(sum(widths))
+    x = (frame.width - total) / 2.0
     baseline = frame.height - 380
     for span, font, w in zip(caption.spans, fonts, widths):
         draw.text((x, baseline), span.text, font=font,
@@ -138,7 +184,8 @@ def vertical_renderer(
             frame = Image.new("RGB", (width, height), palette["bg"])
             _paste_cover(frame, hero_img, spec.scale)
             if spec.caption is not None:
-                _draw_caption(frame, spec.caption, cap_font, fig_font, foot_font, palette)
+                _draw_caption(frame, spec.caption, cap_font, fig_font, foot_font, palette,
+                              shrink=font is None)
             out.append(frame.tobytes())
         return tuple(out)
 

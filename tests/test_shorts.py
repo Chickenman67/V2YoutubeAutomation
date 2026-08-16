@@ -4,7 +4,7 @@ from pathlib import Path
 
 from vibe import check, config
 from vibe.narrate import WordTiming
-from vibe.shorts import build_full_srt, build_segment_srt, caption_cues, timing_end
+from vibe.shorts import _fit_factor, build_full_srt, build_segment_srt, caption_cues, timing_end
 
 
 def _words(*items: tuple[str, float, float]) -> list[WordTiming]:
@@ -176,3 +176,38 @@ def test_ffmpeg_vertical_short_matches_contract(ffmpeg_available, tmp_path):
     srt = tmp_path / "short-1.srt"
     srt.write_text(build_segment_srt("**a**", timing), encoding="utf-8")
     assert check.check_srt(srt).ok
+
+
+def test_fit_factor_is_one_when_within_keep():
+    assert _fit_factor(200, 960) == 1.0
+    assert _fit_factor(0, 960) == 1.0
+
+
+def test_fit_factor_shrinks_when_total_exceeds_keep():
+    assert abs(_fit_factor(2800, 960) - (960 / 2800)) < 1e-9
+
+
+def test_caption_fit_shrinks_long_line_into_safe_zone():
+    pytest.importorskip("PIL")
+    from vibe.render import StyledSpan
+    from vibe.shorts import _fit_layout
+
+    text = ("The persistent rise in mortgage rates keeps pressure on homebuyers "
+            "month after month after month after month")
+    spans = tuple(StyledSpan(w, "base") for w in text.split())
+    fonts, widths, total = _fit_layout(
+        spans, config.CAPTION_SIZE, int(config.CAPTION_SIZE * 1.15), 960.0)
+    assert total <= 960.0
+    assert widths and fonts and len(widths) == len(spans)
+
+
+def test_caption_fit_is_noop_for_short_line():
+    pytest.importorskip("PIL")
+    from vibe.render import StyledSpan
+    from vibe.shorts import _fit_layout
+
+    spans = tuple(StyledSpan(w, "base") for w in ["hello", "world"])
+    _, widths, total = _fit_layout(
+        spans, config.CAPTION_SIZE, int(config.CAPTION_SIZE * 1.15), 960.0)
+    assert total <= 960.0
+    assert total == sum(widths)

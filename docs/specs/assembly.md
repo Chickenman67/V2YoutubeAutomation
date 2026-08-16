@@ -67,6 +67,9 @@ The render is **self-contained**: audio and captions are inside the clip. ffmpeg
 > 1080×1920@30 clip (`shorts/short-<n>.mp4`) is re-rendered with the hero cover-fill
 > center-cropped into the vertical frame (never letterboxed) and captions drawn in the
 > lower safe zone, reusing the same narration audio/timing and the §2.2 encoder flags.
+> **Follow-up (2026-08):** a caption wider than the vertical safe zone is shrunk to fit
+> one centered line inside it (never clipped at the frame edge), honoring §4's
+> one-glanceable-line tenet.
 
 ### 2.5 CC sidecars (.srt)
 
