@@ -54,6 +54,9 @@ def _assert_srt_sync(build: Path, n: int) -> None:
     ends = [float(json.loads(l)["end_s"]) for l in lines if l.strip()]
     srt = build / "cc" / f"segment-{n}.srt"
     cues = check._srt_cues(srt)
+    # Assumes the SRT author yields exactly one cue per script line (the fixture
+    # topics do). A future T7 caption-reflow change that could split a long spoken
+    # line across cues must re-check this coupling.
     assert len(cues) == len(_spoken_lines(text)), (len(cues), len(_spoken_lines(text)))
     assert cues[0][0] >= config.OPEN_PADDING_S - 0.5
     assert abs(cues[-1][1] - (config.OPEN_PADDING_S + ends[-1])) <= 0.5
